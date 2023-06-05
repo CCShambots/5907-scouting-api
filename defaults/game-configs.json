@@ -1,0 +1,39 @@
+{
+  "configs": [
+    {
+      "title": "CHARGED UP",
+      "year": 2023,
+      "items":
+      [
+        {
+          "type": "title",
+          "label": "Auto"
+        },
+        {
+          "type": "checkbox",
+          "label": "Mobility"
+        },
+        {
+          "type": "rating",
+          "min": 0,
+          "max": 4,
+          "label": "Auto Cycles"
+        },
+        {
+          "type": "number",
+          "min": 0,
+          "label": "Cycles"
+        },
+        {
+          "type": "short_text",
+          "label": "Good/Bad/Ugly"
+        },
+        {
+          "type": "long_text",
+          "label": "Describe the extent to which you dislike the CollegeBoard"
+        }
+      ]
+
+    }
+  ]
+}
