@@ -1,3 +1,5 @@
+mod data;
+
 use actix_web::{App, HttpServer, web, Result, main, http};
 use actix_web::web::Path;
 use actix_cors::Cors;

@@ -10,3 +10,4 @@ actix-web = "4.3.1"
 tokio = { version = "1.28.1", features = ["fs"] }
 anyhow = "1.0.71"
 actix-cors = "0.6.4"
+serde_json = "1.0.96"
