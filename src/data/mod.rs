@@ -1,5 +1,4 @@
 pub mod template;
-mod paged;
 
 use std::collections::{HashMap, HashSet};
 use bincode::{Decode, Encode};
@@ -27,7 +26,6 @@ pub struct Form {
 
 #[derive(Encode, Decode, Debug, Serialize, Deserialize)]
 pub enum FieldData {
-    Title(String),
     CheckBox(bool),
     Rating(i64),
     Number(i64),

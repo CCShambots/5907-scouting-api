@@ -5,12 +5,29 @@ use crate::data::{FieldData, Form};
 use crate::data::template::FieldDataType::{CheckBox, LongText, Number, Rating, ShortText, Title};
 
 impl FormTemplate {
+    pub fn new(name: &str, year: i64) -> Self {
+        Self {
+            fields: vec![],
+            name: name.into(),
+            year,
+        }
+    }
+
+    pub fn add_field(&mut self, name: &str, data_type: FieldDataType) {
+        self.fields.push(FieldTemplate {
+            name: name.into(),
+            data_type
+        });
+    }
+
     pub fn validate_form(&self, form: &Form) -> bool {
         for x in &self.fields {
-            match form.get_field(&x.name) {
-                None => { return false; }
-                Some(data) => {
-                    if !x.data_type_match(data) { return false; }
+            if !matches!(x.data_type, Title) {
+                match form.get_field(&x.name) {
+                    None => { return false; }
+                    Some(data) => {
+                        if !x.data_type_match(data) { return false; }
+                    }
                 }
             }
         }
@@ -22,10 +39,9 @@ impl FormTemplate {
 impl FieldTemplate {
     fn data_type_match(&self, data: &FieldData) -> bool {
         match data {
-            FieldData::Title(_) => { self.data_type == Title }
             FieldData::CheckBox(_) => { self.data_type == CheckBox }
-            FieldData::Rating(_) => { self.data_type == Rating(_, _) }
-            FieldData::Number(_) => { self.data_type == Number(_, _) }
+            FieldData::Rating(_) => { matches!(self.data_type, Rating{ .. }) }
+            FieldData::Number(_) => { self.data_type == Number }
             FieldData::ShortText(_) => { self.data_type == ShortText }
             FieldData::LongText(_) => { self.data_type == LongText }
         }
@@ -33,7 +49,7 @@ impl FieldTemplate {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct FieldTemplate {
+struct FieldTemplate {
     data_type: FieldDataType,
     name: String
 }
@@ -41,16 +57,16 @@ pub struct FieldTemplate {
 #[derive(Serialize, Deserialize)]
 pub struct FormTemplate {
     fields: Vec<FieldTemplate>,
-    name: String,
+    pub name: String,
     year: i64
 }
 
 #[derive(Serialize, Deserialize, Eq, PartialEq)]
-enum FieldDataType {
+pub enum FieldDataType {
     Title,
     CheckBox,
-    Rating(i64, i64),
-    Number(i64, i64),
+    Rating{ min: i64, max: i64 },
+    Number,
     ShortText,
     LongText
 }
