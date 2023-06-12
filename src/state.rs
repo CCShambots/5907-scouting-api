@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::read_to_string;
 use std::hash::Hash;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 use actix_web::{HttpResponse, ResponseError};
@@ -40,20 +41,43 @@ impl AppState {
         }
     }
 
+    pub async fn get_templates(&self) -> Vec<String> {
+        let mut templates: Vec<String> = Vec::new();
+
+        for x in self.templates.lock().await.keys() {
+            templates.push(x.clone());
+        }
+
+        templates
+    }
+
+    pub async fn get_template(&self, template: String) -> Result<FormTemplate, GetError> {
+        if self.templates.lock().await.contains_key(&template) {
+            let out = self.templates.lock().await.get(&template).cloned().unwrap();
+
+            Ok(out)
+        }
+        else {
+            Err(GetError::TemplateDoesNotExist { template })
+        }
+    }
+
     pub async fn build_cache(&self) -> Result<(), GetError> {
         for tree_name in self.db.tree_names() {
             let name = String::from_utf8(tree_name.to_vec()).unwrap();
 
-            println!("building for tree {}", name);
+            if self.templates.lock().await.contains_key(&name) {
+                println!("building for tree {}", name);
 
-            let tree = self.db.open_tree(tree_name)?;
+                let tree = self.db.open_tree(tree_name)?;
 
-            for p in tree.iter() {
-                let pair = p?;
-                let uuid: Uuid = Uuid::from_bytes(uuid::Bytes::try_from(pair.0.to_vec()).unwrap()); //questionable
-                let (form, _): (Form, usize) = bincode::decode_from_slice(&pair.1, self.byte_config)?;
+                for p in tree.iter() {
+                    let pair = p?;
+                    let uuid: Uuid = Uuid::from_bytes(uuid::Bytes::try_from(pair.0.to_vec()).unwrap()); //questionable
+                    let (form, _): (Form, usize) = bincode::decode_from_slice(&pair.1, self.byte_config)?;
 
-                self.update_cache(&form, uuid, &name).await?;
+                    self.update_cache(&form, uuid, &name).await?;
+                }
             }
         }
 
@@ -148,7 +172,10 @@ impl From<GetError> for SubmitError {
 
 impl ResponseError for GetError {
     fn status_code(&self) -> StatusCode {
-        StatusCode::INTERNAL_SERVER_ERROR
+        match self {
+            GetError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            GetError::TemplateDoesNotExist { .. } => StatusCode::BAD_REQUEST
+        }
     }
 
     fn error_response(&self) -> HttpResponse<BoxBody> {
@@ -245,7 +272,10 @@ pub struct AppState {
 #[derive(Debug, Display, Error)]
 pub enum GetError {
     #[display(fmt = "Internal error")]
-    Internal
+    Internal,
+
+    #[display(fmt = "The template \"{}\" does not exist", template)]
+    TemplateDoesNotExist { template: String }
 }
 
 #[derive(Debug, Display, Error)]

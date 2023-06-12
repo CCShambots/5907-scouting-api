@@ -1,10 +1,10 @@
 mod data;
 mod state;
 
-use std::sync::Arc;
 use actix_web::{App, HttpServer, web, Result, main, http, Responder, HttpResponse, ResponseError};
 use actix_web::web::{Data, Json, Path, Query};
 use actix_cors::Cors;
+use log::info;
 use tokio::fs::read_to_string;
 use crate::data::Form;
 use crate::data::template::{FieldDataType, FormTemplate};
@@ -19,14 +19,15 @@ async fn run_server() -> std::io::Result<()> {
     let db = sled::open("database")?;
     let state = AppState::new(db);
 
-    println!("Building Cache...");
+
+
+    info!("Building Cache");
 
     state.build_cache().await.unwrap();
 
-    println!("Done Building Cache, Starting HTTP Server");
+    info!("Finished building cache, starting http server...");
 
     let data = Data::new(state);
-
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -44,6 +45,8 @@ async fn run_server() -> std::io::Result<()> {
             .service(teams)
             .service(game_configs)
             .service(submit_form)
+            .service(get_template)
+            .service(templates)
     })
         .bind(("0.0.0.0", 8080))?
         .run()
@@ -70,6 +73,16 @@ async fn teams(data: Data<AppState>, path: Path<(String, i64)>) -> Result<HttpRe
     let forms: Vec<Form> = data.get_all_for_team(path_data.0, path_data.1).await?;
 
     Ok(HttpResponse::Ok().json(forms))
+}
+
+#[actix_web::get("/templates/{template}")]
+async fn get_template(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, GetError> {
+    Ok(HttpResponse::Ok().json(data.get_template(path.into_inner()).await?))
+}
+
+#[actix_web::get("/templates")]
+async fn templates(data: Data<AppState>) -> Result<HttpResponse, GetError> {
+    Ok(HttpResponse::Ok().json(data.get_templates().await))
 }
 
 //TODO: change these VV
