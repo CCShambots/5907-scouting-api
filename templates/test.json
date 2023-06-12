@@ -1,0 +1,7 @@
+{
+  "name": "test",
+  "year": 2023,
+  "fields": [
+    {"data_type":  "Number", "name": "Test Num" }
+  ]
+}
