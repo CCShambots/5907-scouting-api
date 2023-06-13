@@ -5,10 +5,11 @@ use actix_web::{App, HttpServer, web, Result, main, http, Responder, HttpRespons
 use actix_web::web::{Data, Json, Path, Query};
 use actix_cors::Cors;
 use log::info;
+use sled::{Config, Mode};
 use tokio::fs::read_to_string;
 use crate::data::Form;
 use crate::data::template::{FieldDataType, FormTemplate};
-use crate::state::{AppState, GetError, SubmitError};
+use crate::state::{AppState, Filter, GetError, SubmitError};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -16,7 +17,11 @@ async fn main() -> std::io::Result<()> {
 }
 
 async fn run_server() -> std::io::Result<()> {
-    let db = sled::open("database")?;
+    let db = Config::default()
+        .path("database")
+        .mode(Mode::HighThroughput)
+        .open()?;
+
     let state = AppState::new(db);
 
 
@@ -67,10 +72,10 @@ async fn submit_form(data: Data<AppState>, path: Path<String>, form: Json<Form>)
 
     Ok(HttpResponse::Ok().finish())
 }
-#[actix_web::get("/template/{template}/teams/{team}")]
-async fn teams(data: Data<AppState>, path: Path<(String, i64)>) -> Result<HttpResponse, GetError> {
+#[actix_web::get("/template/{template}/get")]
+async fn teams(data: Data<AppState>, path: Path<String>, query: Query<Filter>) -> Result<HttpResponse, GetError> {
     let path_data = path.into_inner();
-    let forms: Vec<Form> = data.get_all_for_team(path_data.0, path_data.1).await?;
+    let forms: Vec<Form> = data.get(path_data, query.0).await?;
 
     Ok(HttpResponse::Ok().json(forms))
 }
@@ -95,8 +100,6 @@ async fn event(path: Path<(String)>) -> Result<String> {
 async fn event_names() -> Result<String> {
     get_default("event-names").await
 }
-
-
 
 #[actix_web::get("/game-configs")]
 async fn game_configs() -> Result<String> {

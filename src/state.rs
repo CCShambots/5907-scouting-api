@@ -14,11 +14,13 @@ use bincode::config::{Configuration};
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::{Display, Error};
 use serde::de::Unexpected::Map;
+use serde::Deserialize;
 use sled::Db;
 use tokio::sync::Mutex;
 use uuid::{Uuid, uuid};
 use crate::data::Form;
 use crate::data::template::FormTemplate;
+use crate::state::CacheInput::{Event, Match, Scouter, Team};
 use crate::state::SubmitError::{FormDoesNotFollowTemplate, Internal, TemplateDoesNotExist};
 
 impl AppState {
@@ -82,6 +84,69 @@ impl AppState {
         }
 
         Ok(())
+    }
+
+    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, GetError> {
+        let (cache_result, num_filters) = self.get_uuids_from_filter(&template, &filter).await?;
+        let mut map: HashMap<Uuid, i64> = HashMap::new();
+        let mut out: Vec<Uuid> = Vec::new();
+
+        for uuid in cache_result {
+            if let Some(x) = map.get_mut(&uuid) {
+                *x += 1;
+            }
+            else {
+                map.insert(uuid, 1);
+            }
+        }
+
+        for (uuid, num) in map {
+            if num >= num_filters {
+                out.push(uuid);
+            }
+        }
+
+        self.get_forms(&template, &out)
+    }
+
+    fn get_forms(&self, template: &String, uuids: &Vec<Uuid>) -> Result<Vec<Form>, GetError> {
+        let mut out: Vec<Form> = Vec::new();
+        let tree = self.db.open_tree(template)?;
+
+        for x in uuids {
+            let (decoded, _): (Form, usize) = bincode::decode_from_slice(&tree.get(x)?.unwrap(), self.byte_config)?;
+
+            out.push(decoded);
+        }
+
+        Ok(out)
+    }
+
+    async fn get_uuids_from_filter(&self, template: &String, filter: &Filter) -> Result<(Vec<Uuid>, i64), GetError> {
+        let mut out: Vec<Uuid> = Vec::new();
+        let mut num_filters: i64 = 0;
+
+        if let Some(team) = filter.team {
+            out.append(&mut self.cache.get(Team(team), template).await?);
+            num_filters += 1;
+        }
+
+        if let Some(match_number) = filter.match_number {
+            out.append(&mut self.cache.get(Match(match_number), template).await?);
+            num_filters += 1;
+        }
+
+        if let Some(scouter) = &filter.scouter {
+            out.append(&mut self.cache.get(Scouter(scouter.clone()), template).await?);
+            num_filters += 1;
+        }
+
+        if let Some(event) = &filter.event {
+            out.append(&mut self.cache.get(Event(event.clone()), template).await?);
+            num_filters += 1;
+        }
+
+        Ok((out, num_filters))
     }
 
     pub async fn get_all_for_team(&self, template: String, team: i64) -> Result<Vec<Form>, GetError> {
@@ -259,6 +324,14 @@ enum CacheInput {
     Event(String),
     Match(i64),
     Team(i64)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Filter {
+    match_number: Option<i64>,
+    team: Option<i64>,
+    event: Option<String>,
+    scouter: Option<String>
 }
 
 pub struct AppState {
