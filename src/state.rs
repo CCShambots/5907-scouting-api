@@ -146,18 +146,22 @@ impl AppState {
             num_filters += 1;
         }
 
+        if num_filters == 0 {
+            return Ok((self.get_all(template).await?, num_filters));
+        }
+
         Ok((out, num_filters))
     }
 
-    pub async fn get_all_for_team(&self, template: String, team: i64) -> Result<Vec<Form>, GetError> {
-        let mut out: Vec<Form> = Vec::new();
-        let tree = self.db.open_tree(template.clone())?;
+    pub async fn get_all(&self, template: &String) -> Result<Vec<Uuid>, GetError> {
+        let tree = self.db.open_tree(template)?;
+        let mut out: Vec<Uuid> = Vec::new();
 
-        for x in self.cache.get(CacheInput::Team(team), &template).await? {
-            println!("{} found in cache", x);
-            let (decoded, _): (Form, usize) = bincode::decode_from_slice(&tree.get(x)?.unwrap(), self.byte_config)?;
+        for p in tree.iter() {
+            let pair = p?;
+            let uuid: Uuid = Uuid::from_bytes(uuid::Bytes::try_from(pair.0.to_vec()).unwrap()); //questionable
 
-            out.push(decoded);
+            out.push(uuid);
         }
 
         Ok(out)
@@ -184,10 +188,10 @@ impl AppState {
     }
 
     pub async fn update_cache(&self, form: &Form, uuid: Uuid, template: &String) -> Result<(), GetError> {
-        self.cache.add(CacheInput::Team(form.team), uuid, template).await?;
-        self.cache.add(CacheInput::Match(form.match_number), uuid, template).await?;
-        self.cache.add(CacheInput::Scouter(form.scouter.clone()), uuid, template).await?;
-        self.cache.add(CacheInput::Event(form.event_key.clone()), uuid, template).await?;
+        self.cache.add(Team(form.team), uuid, template).await?;
+        self.cache.add(Match(form.match_number), uuid, template).await?;
+        self.cache.add(Scouter(form.scouter.clone()), uuid, template).await?;
+        self.cache.add(Event(form.event_key.clone()), uuid, template).await?;
 
         Ok(())
     }
