@@ -275,7 +275,7 @@ impl Cache {
             .await
             .get(&key)
         {
-            Some(cache) => Ok(cache.clone()), //TODO: remove yucky clone
+            Some(cache) => Ok(cache.clone()),
             None => Ok(Vec::new()),
         }
     }
