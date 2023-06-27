@@ -1,15 +1,17 @@
 mod data;
 mod state;
 
-use actix_web::{App, HttpServer, web, Result, main, http, Responder, HttpResponse, ResponseError};
-use actix_web::web::{Data, Json, Path, Query};
+use crate::data::template::{FieldDataType, FormTemplate};
+use crate::data::FieldData::Number;
+use crate::data::{Form, Schedule};
 use actix_cors::Cors;
-use log::info;
+use actix_web::web::{Data, Json, Path, Query};
+use actix_web::{http, main, web, App, HttpResponse, HttpServer, Responder, ResponseError, Result};
+use rand::Rng;
 use sled::{Config, Mode};
 use tokio::fs::read_to_string;
-use crate::data::Form;
-use crate::data::template::{FieldDataType, FormTemplate};
-use crate::state::{AppState, Filter, GetError, SubmitError};
+use crate::data::db_layer::{Filter, GetError, SubmitError};
+use crate::state::AppState;
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -22,15 +24,18 @@ async fn run_server() -> std::io::Result<()> {
         .mode(Mode::HighThroughput)
         .open()?;
 
+    println!(
+        "{} MB",
+        db.size_on_disk().unwrap() as f64 / (1024.0 * 1024.0)
+    );
+
     let state = AppState::new(db);
 
-
-
-    info!("Building Cache");
+    println!("Building Cache");
 
     state.build_cache().await.unwrap();
 
-    info!("Finished building cache, starting http server...");
+    println!("Finished building cache, starting http server...");
 
     let data = Data::new(state);
 
@@ -45,35 +50,44 @@ async fn run_server() -> std::io::Result<()> {
         App::new()
             .app_data(data.clone())
             .wrap(cors)
-            .service(event_names)
-            .service(event)
             .service(teams)
-            .service(game_configs)
             .service(submit_form)
             .service(get_template)
             .service(templates)
+            .service(set_schedule)
+            .service(get_schedule)
+            .service(get_shifts)
     })
-        .bind(("0.0.0.0", 8080))?
-        .run()
-        .await
+    .bind(("0.0.0.0", 8080))?
+    .run()
+    .await
 }
 
-async fn get_default(def: &str) -> Result<String> {
-    Ok(minimize(read_to_string(format!("defaults/{def}.json")).await?))
-}
-
-fn minimize(s: String) -> String {
-    s.replace("", "").replace("\t", "").replace("\n", "")
-}
 
 #[actix_web::post("/template/{template}/submit")]
-async fn submit_form(data: Data<AppState>, path: Path<String>, form: Json<Form>) -> Result<HttpResponse, SubmitError> {
+async fn submit_form(
+    data: Data<AppState>,
+    path: Path<String>,
+    form: Json<Form>,
+) -> Result<HttpResponse, SubmitError> {
     data.submit_form(path.into_inner(), &form.0).await?;
 
     Ok(HttpResponse::Ok().finish())
 }
+
+#[actix_web::post("/schedules/submit")]
+async fn set_schedule(data: Data<AppState>, schedule: Json<Schedule>) -> Result<HttpResponse, SubmitError> {
+    data.set_schedule(schedule.event.clone(), schedule.into_inner()).await?;
+
+    Ok(HttpResponse::Ok().finish())
+}
+
 #[actix_web::get("/template/{template}/get")]
-async fn teams(data: Data<AppState>, path: Path<String>, query: Query<Filter>) -> Result<HttpResponse, GetError> {
+async fn teams(
+    data: Data<AppState>,
+    path: Path<String>,
+    query: Query<Filter>,
+) -> Result<HttpResponse, GetError> {
     let path_data = path.into_inner();
     let forms: Vec<Form> = data.get(path_data, query.0).await?;
 
@@ -90,18 +104,13 @@ async fn templates(data: Data<AppState>) -> Result<HttpResponse, GetError> {
     Ok(HttpResponse::Ok().json(data.get_templates().await))
 }
 
-//TODO: change these VV
-#[actix_web::get("/event/{event}")]
-async fn event(path: Path<(String)>) -> Result<String> {
-    get_default("event").await
+#[actix_web::get("/schedules/{event}/{scouter}")]
+async fn get_shifts(data: Data<AppState>, path: Path<(String, String)>) -> Result<HttpResponse, GetError> {
+    let path_data = path.into_inner();
+    Ok(HttpResponse::Ok().json(data.get_shifts(path_data.0, path_data.1).await?))
 }
 
-#[actix_web::get("/event/event-names")]
-async fn event_names() -> Result<String> {
-    get_default("event-names").await
-}
-
-#[actix_web::get("/game-configs")]
-async fn game_configs() -> Result<String> {
-    Ok(read_to_string("../templates/2023_CHARGED_UP.json").await?)
+#[actix_web::get("/schedules/{event}")]
+async fn get_schedule(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, GetError> {
+    Ok(HttpResponse::Ok().json(data.get_schedule(path.into_inner()).await?))
 }
