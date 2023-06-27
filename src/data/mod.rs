@@ -1,5 +1,5 @@
-pub mod template;
 pub mod db_layer;
+pub mod template;
 
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -37,7 +37,7 @@ pub enum FieldData {
 #[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
 pub struct Schedule {
     pub event: String,
-    pub shifts: Vec<Shift>
+    pub shifts: Vec<Shift>,
 }
 
 #[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
@@ -45,5 +45,5 @@ pub struct Shift {
     pub scouter: String,
     pub station: u8,
     pub match_start: u32,
-    pub match_end: u32
+    pub match_end: u32,
 }

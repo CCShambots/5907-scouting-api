@@ -1,24 +1,24 @@
+use crate::data::db_layer::CacheInput::{Event, Match, Scouter, Team};
+use crate::data::db_layer::SubmitError::{FormDoesNotFollowTemplate, TemplateDoesNotExist};
+use crate::data::template::FormTemplate;
+use crate::data::{Form, Schedule, Shift};
+use actix_web::body::BoxBody;
+use actix_web::http::header::ContentType;
+use actix_web::http::StatusCode;
+use actix_web::{HttpResponse, ResponseError};
+use bincode::config::{BigEndian, Configuration};
+use bincode::error::{DecodeError, EncodeError};
+use derive_more::{Display, Error};
+use serde::Deserialize;
+use sled::{Db, IVec};
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
-use bincode::config::{BigEndian, Configuration};
-use sled::{Db, IVec};
-use uuid::{Uuid, uuid};
-use serde::Deserialize;
-use crate::data::template::FormTemplate;
-use tokio::sync::Mutex;
 use std::fmt::Debug;
 use std::fs::read_to_string;
 use std::ops::BitAnd;
 use std::path::Path;
-use actix_web::http::StatusCode;
-use actix_web::{HttpResponse, ResponseError};
-use actix_web::body::BoxBody;
-use actix_web::http::header::ContentType;
-use bincode::error::{DecodeError, EncodeError};
-use derive_more::{Display, Error};
-use crate::data::db_layer::CacheInput::{Event, Match, Scouter, Team};
-use crate::data::{Form, Schedule, Shift};
-use crate::data::db_layer::SubmitError::{FormDoesNotFollowTemplate, TemplateDoesNotExist};
+use tokio::sync::Mutex;
+use uuid::{uuid, Uuid};
 
 impl DBLayer {
     pub fn new(db: Db, template_path: &str) -> Self {
@@ -38,7 +38,7 @@ impl DBLayer {
             db,
             byte_config: bincode::config::standard(),
             templates: Mutex::new(templates),
-            cache: Cache::new(template_names)
+            cache: Cache::new(template_names),
         }
     }
 
@@ -91,12 +91,12 @@ impl DBLayer {
     pub async fn get_shifts(&self, event: String, scouter: String) -> Result<Vec<Shift>, GetError> {
         let schedule = self.get_schedule(event).await?;
 
-        Ok(schedule.shifts
+        Ok(schedule
+            .shifts
             .iter()
             .filter(|shift| shift.scouter == scouter)
             .cloned()
-            .collect()
-        )
+            .collect())
     }
 
     pub async fn submit_form(&self, template: String, form: &Form) -> Result<(), SubmitError> {
@@ -129,7 +129,7 @@ impl DBLayer {
     pub async fn get_template(&self, template: String) -> Result<FormTemplate, GetError> {
         match self.templates.lock().await.get(&template) {
             Some(temp) => Ok(temp.clone()),
-            None => Err(GetError::TemplateDoesNotExist { template })
+            None => Err(GetError::TemplateDoesNotExist { template }),
         }
     }
 
@@ -138,12 +138,11 @@ impl DBLayer {
         let tree = self.db.open_tree(template)?;
 
         //im cray cray
-        Ok(
-            tree.iter()
-                .keys()
-                .map(|bytes| Uuid::from_slice(&bytes.unwrap()).unwrap())
-                .collect()
-        )
+        Ok(tree
+            .iter()
+            .keys()
+            .map(|bytes| Uuid::from_slice(&bytes.unwrap()).unwrap())
+            .collect())
     }
 
     async fn get_uuids_from_filter(
@@ -253,7 +252,6 @@ impl Cache {
         Ok(())
     }
 
-
     async fn clear(&mut self) {
         for cache in &mut self.cache {
             cache.1.lock().await.clear();
@@ -336,7 +334,7 @@ impl ResponseError for GetError {
         match self {
             GetError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             GetError::TemplateDoesNotExist { .. } => StatusCode::BAD_REQUEST,
-            GetError::NoScheduleForEvent { .. } => StatusCode::BAD_REQUEST
+            GetError::NoScheduleForEvent { .. } => StatusCode::BAD_REQUEST,
         }
     }
 
@@ -372,7 +370,7 @@ pub enum GetError {
     TemplateDoesNotExist { template: String },
 
     #[display(fmt = "There is not a schedule for event \"{event}\"")]
-    NoScheduleForEvent { event: String }
+    NoScheduleForEvent { event: String },
 }
 
 #[derive(Debug, Display, Error)]
@@ -391,7 +389,7 @@ pub struct DBLayer {
     db: Db,
     cache: Cache,
     byte_config: Configuration,
-    templates: Mutex<HashMap<String, FormTemplate>>
+    templates: Mutex<HashMap<String, FormTemplate>>,
 }
 
 #[derive(Default)]

@@ -1,17 +1,17 @@
 mod data;
 mod state;
 
+use crate::data::db_layer::{Filter, GetError, SubmitError};
 use crate::data::template::{FieldDataType, FormTemplate};
 use crate::data::FieldData::Number;
 use crate::data::{Form, Schedule};
+use crate::state::AppState;
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, web, App, HttpResponse, HttpServer, Responder, ResponseError, Result};
 use rand::Rng;
 use sled::{Config, Mode};
 use tokio::fs::read_to_string;
-use crate::data::db_layer::{Filter, GetError, SubmitError};
-use crate::state::AppState;
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -63,7 +63,6 @@ async fn run_server() -> std::io::Result<()> {
     .await
 }
 
-
 #[actix_web::post("/template/{template}/submit")]
 async fn submit_form(
     data: Data<AppState>,
@@ -76,8 +75,12 @@ async fn submit_form(
 }
 
 #[actix_web::post("/schedules/submit")]
-async fn set_schedule(data: Data<AppState>, schedule: Json<Schedule>) -> Result<HttpResponse, SubmitError> {
-    data.set_schedule(schedule.event.clone(), schedule.into_inner()).await?;
+async fn set_schedule(
+    data: Data<AppState>,
+    schedule: Json<Schedule>,
+) -> Result<HttpResponse, SubmitError> {
+    data.set_schedule(schedule.event.clone(), schedule.into_inner())
+        .await?;
 
     Ok(HttpResponse::Ok().finish())
 }
@@ -105,7 +108,10 @@ async fn templates(data: Data<AppState>) -> Result<HttpResponse, GetError> {
 }
 
 #[actix_web::get("/schedules/{event}/{scouter}")]
-async fn get_shifts(data: Data<AppState>, path: Path<(String, String)>) -> Result<HttpResponse, GetError> {
+async fn get_shifts(
+    data: Data<AppState>,
+    path: Path<(String, String)>,
+) -> Result<HttpResponse, GetError> {
     let path_data = path.into_inner();
     Ok(HttpResponse::Ok().json(data.get_shifts(path_data.0, path_data.1).await?))
 }
