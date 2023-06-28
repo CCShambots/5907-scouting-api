@@ -44,27 +44,24 @@ impl DBLayer {
 
     pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, GetError> {
         let cache_result = self.get_uuids_from_filter(&template, &filter).await?;
-        let mut set: HashSet<&Uuid> = HashSet::from_iter(cache_result[0].iter());
+        let mut set = cache_result[0].clone();
 
         for x in &cache_result[1..] {
-            set = set.bitand(&HashSet::from_iter(x.iter()));
+            set = set.bitand(x);
         }
 
-        self.get_forms(&template, set.iter().copied().collect())
+        self.get_forms(&template, set.iter().collect())
     }
 
     fn get_forms(&self, template: &String, uuids: Vec<&Uuid>) -> Result<Vec<Form>, GetError> {
-        let mut out: Vec<Form> = Vec::new();
         let tree = self.db.open_tree(template)?;
 
-        for x in uuids {
-            let (decoded, _): (Form, usize) =
-                bincode::decode_from_slice(&tree.get(x)?.unwrap(), self.byte_config)?;
-
-            out.push(decoded);
-        }
-
-        Ok(out)
+        Ok(
+            uuids
+                .iter()
+                .map(|x| bincode::decode_from_slice(&tree.get(x).unwrap().unwrap(), self.byte_config).unwrap().0)
+                .collect()
+        )
     }
 
     pub async fn get_schedule(&self, event: String) -> Result<Schedule, GetError> {
@@ -134,23 +131,23 @@ impl DBLayer {
     }
 
     //get all form ids that follow a template
-    async fn get_all(&self, template: &String) -> Result<Vec<Uuid>, GetError> {
+    async fn get_all(&self, template: &String) -> Result<HashSet<Uuid>, GetError> {
         let tree = self.db.open_tree(template)?;
 
         //im cray cray
-        Ok(tree
+        Ok(HashSet::from_iter(tree
             .iter()
             .keys()
-            .map(|bytes| Uuid::from_slice(&bytes.unwrap()).unwrap())
-            .collect())
+            .map(|bytes| Uuid::from_slice(&bytes.unwrap()).unwrap()))
+        )
     }
 
     async fn get_uuids_from_filter(
         &self,
         template: &String,
         filter: &Filter,
-    ) -> Result<Vec<Vec<Uuid>>, GetError> {
-        let mut out: Vec<Vec<Uuid>> = Vec::new();
+    ) -> Result<Vec<HashSet<Uuid>>, GetError> {
+        let mut out: Vec<HashSet<Uuid>> = Vec::new();
         let mut num_filters: i64 = 0;
 
         if let Some(team) = filter.team {
@@ -242,10 +239,10 @@ impl Cache {
 
         match map.get_mut(&key) {
             Some(cache) => {
-                cache.push(val);
+                cache.insert(val);
             }
             None => {
-                map.insert(key, vec![val]);
+                map.insert(key, HashSet::from([val]));
             }
         };
 
@@ -261,14 +258,14 @@ impl Cache {
     fn try_get_template_cache(
         &self,
         template: &String,
-    ) -> Result<&Mutex<HashMap<CacheInput, Vec<Uuid>>>, GetError> {
+    ) -> Result<&Mutex<HashMap<CacheInput, HashSet<Uuid>>>, GetError> {
         match self.cache.get(template) {
             None => Err(GetError::Internal),
             Some(map) => Ok(map),
         }
     }
 
-    async fn get(&self, key: CacheInput, template: &String) -> Result<Vec<Uuid>, GetError> {
+    async fn get(&self, key: CacheInput, template: &String) -> Result<HashSet<Uuid>, GetError> {
         match self
             .try_get_template_cache(template)?
             .lock()
@@ -276,7 +273,7 @@ impl Cache {
             .get(&key)
         {
             Some(cache) => Ok(cache.clone()),
-            None => Ok(Vec::new()),
+            None => Ok(HashSet::new()),
         }
     }
 }
@@ -394,7 +391,7 @@ pub struct DBLayer {
 
 #[derive(Default)]
 struct Cache {
-    cache: HashMap<String, Mutex<HashMap<CacheInput, Vec<Uuid>>>>,
+    cache: HashMap<String, Mutex<HashMap<CacheInput, HashSet<Uuid>>>>,
 }
 
 #[derive(Eq, Hash, PartialEq)]
