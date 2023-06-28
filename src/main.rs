@@ -1,15 +1,15 @@
 mod data;
-mod state;
 mod settings;
+mod state;
 
 use crate::data::db_layer::{Filter, GetError, SubmitError};
 use crate::data::{Form, Schedule};
+use crate::settings::Settings;
 use crate::state::AppState;
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
-use crate::settings::Settings;
 
 #[main]
 async fn main() -> std::io::Result<()> {

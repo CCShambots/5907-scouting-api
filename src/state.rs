@@ -1,14 +1,14 @@
 use crate::data::db_layer::{DBLayer, Filter, GetError, SubmitError};
 use crate::data::template::FormTemplate;
 use crate::data::{Form, Schedule, Shift};
-use sled::Db;
 use crate::settings::Settings;
+use sled::Db;
 
 impl AppState {
     pub fn new(db: Db, config: Settings) -> Self {
         Self {
             db_layer: DBLayer::new(db, "templates"),
-            config
+            config,
         }
     }
 
@@ -47,5 +47,5 @@ impl AppState {
 
 pub struct AppState {
     db_layer: DBLayer,
-    config: Settings
+    config: Settings,
 }
