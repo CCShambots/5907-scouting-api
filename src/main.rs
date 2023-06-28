@@ -1,17 +1,15 @@
 mod data;
 mod state;
+mod settings;
 
 use crate::data::db_layer::{Filter, GetError, SubmitError};
-use crate::data::template::{FieldDataType, FormTemplate};
-use crate::data::FieldData::Number;
 use crate::data::{Form, Schedule};
 use crate::state::AppState;
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{http, main, web, App, HttpResponse, HttpServer, Responder, ResponseError, Result};
-use rand::Rng;
+use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
-use tokio::fs::read_to_string;
+use crate::settings::Settings;
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -19,9 +17,14 @@ async fn main() -> std::io::Result<()> {
 }
 
 async fn run_server() -> std::io::Result<()> {
+    let config = Settings::new("config.toml").unwrap();
+
+    println!("Configuration: {:?}", config);
+
     let db = Config::default()
-        .path("database")
+        .path(config.database.path.clone())
         .mode(Mode::HighThroughput)
+        .cache_capacity(config.database.cache_capacity)
         .open()?;
 
     println!(
@@ -29,7 +32,7 @@ async fn run_server() -> std::io::Result<()> {
         db.size_on_disk().unwrap() as f64 / (1024.0 * 1024.0)
     );
 
-    let state = AppState::new(db);
+    let state = AppState::new(db, config);
 
     println!("Building Cache");
 
