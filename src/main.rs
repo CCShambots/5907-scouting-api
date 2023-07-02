@@ -77,12 +77,13 @@ async fn submit_form(
     Ok(HttpResponse::Ok().finish())
 }
 
-#[actix_web::post("/schedules/submit")]
+#[actix_web::post("/schedules/{event}/submit")]
 async fn set_schedule(
     data: Data<AppState>,
     schedule: Json<Schedule>,
+    path: Path<String>
 ) -> Result<HttpResponse, SubmitError> {
-    data.set_schedule(schedule.event.clone(), schedule.into_inner())
+    data.set_schedule(path.into_inner(), schedule.into_inner())
         .await?;
 
     Ok(HttpResponse::Ok().finish())
