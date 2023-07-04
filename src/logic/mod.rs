@@ -1,8 +1,14 @@
+mod messages;
+
+use std::fmt::{Debug, Display, Formatter};
+use derive_more::{Display, Error};
 use crate::data::db_layer::{DBLayer, Filter, GetError, SubmitError};
 use crate::data::template::FormTemplate;
 use crate::data::{Form, Schedule, Shift};
 use crate::settings::Settings;
 use sled::Db;
+use uuid::Uuid;
+use crate::logic::messages::{FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
 
 impl AppState {
     pub fn new(db: Db, config: Settings) -> Self {
@@ -10,6 +16,38 @@ impl AppState {
             db_layer: DBLayer::new(db, "templates"),
             config,
         }
+    }
+
+    pub async fn mutate(&self, message: InternalMessage) -> Result<(), Error> {
+        match message.msg {
+            Internal::Form(msg) =>
+                self.handle_form_message(msg).await,
+
+            Internal::Template(msg) =>
+                self.handle_template_message(msg).await,
+
+            Internal::Scouter(msg) =>
+                self.handle_scouter_message(msg).await,
+
+            Internal::Schedule(msg) =>
+                self.handle_schedule_message(msg).await
+        }
+    }
+
+    async fn handle_form_message(&self, message: FormMessage) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn handle_template_message(&self, message: TemplateMessage) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn handle_scouter_message(&self, message: ScouterMessage) -> Result<(), Error> {
+        todo!()
+    }
+
+    async fn handle_schedule_message(&self, message: ScheduleMessage) -> Result<(), Error> {
+        todo!()
     }
 
     pub async fn get_templates(&self) -> Vec<String> {
@@ -48,4 +86,15 @@ impl AppState {
 pub struct AppState {
     db_layer: DBLayer,
     config: Settings,
+}
+
+#[derive(Debug)]
+pub enum Error {
+    Internal,
+    UuidDoesNotExist { uuid: Uuid },
+    TemplateDoesNotExist { template: String } ,
+    ScouterDoesNotExist { scouter: String } ,
+    ScheduleDoesNotExist { schedule: String },
+    TemplateNameReserved { name: String },
+    FormDoesNotFollowTemplate { forms: Vec<Form> }
 }

@@ -2,9 +2,13 @@ pub mod db_layer;
 pub mod template;
 
 use bincode::{Decode, Encode};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Result, Value};
 use std::collections::{HashMap, HashSet};
+use bincode::enc::Encoder;
+use bincode::enc::write::Writer;
+use bincode::error::EncodeError;
+use uuid::Uuid;
 
 impl Form {
     pub fn add_field(&mut self, name: &str, data: FieldData) {
@@ -23,6 +27,7 @@ pub struct Form {
     pub team: i64,
     pub match_number: i64,
     pub event_key: String,
+    id: Option<u128>
 }
 
 #[derive(Encode, Decode, Debug, Serialize, Deserialize)]
@@ -38,6 +43,7 @@ pub enum FieldData {
 pub struct Schedule {
     pub event: String,
     pub shifts: Vec<Shift>,
+    id: Option<u128>
 }
 
 #[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
@@ -46,4 +52,12 @@ pub struct Shift {
     pub station: u8,
     pub match_start: u32,
     pub match_end: u32,
+}
+
+#[derive(Encode, Decode, Debug, Serialize, Deserialize, Clone)]
+pub struct Scouter {
+    name: String,
+    team: i32,
+    accuracy: f32,
+    id: Option<u128>
 }
