@@ -2,16 +2,14 @@ mod data;
 mod settings;
 mod state;
 
-use std::str::FromStr;
 use crate::data::db_layer::{Filter, GetError, SubmitError};
 use crate::data::{Form, Schedule};
 use crate::settings::Settings;
 use crate::state::AppState;
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{http, main, App, HttpResponse, HttpServer, Result, Error};
+use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
-use uuid::Uuid;
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -62,29 +60,10 @@ async fn run_server() -> std::io::Result<()> {
             .service(set_schedule)
             .service(get_schedule)
             .service(get_shifts)
-            .service(update)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
     .await
-}
-
-#[actix_web::get("templates/{template}/update/{uuid}")]
-async fn update(data: Data<AppState>, path: Path<(String, String)>) -> Result<HttpResponse, GetError> {
-    let (template, uuid) = path.into_inner();
-    let pre_modified_data =
-        data.get_latest(
-            Uuid::try_parse(&uuid)
-                .map_err(|_| { GetError::BadUUID { uuid } })?,
-            template
-        ).await?;
-
-    let resp: Vec<(u128, &Form)> = pre_modified_data
-        .iter()
-        .map(|(id, form)| { (id.to_u128_le(), form) } )
-        .collect();
-
-    Ok(HttpResponse::Ok().json(resp))
 }
 
 #[actix_web::post("/template/{template}/submit")]

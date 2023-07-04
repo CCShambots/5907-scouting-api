@@ -15,10 +15,9 @@ use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::read_to_string;
-use std::ops::{BitAnd, Range};
+use std::ops::BitAnd;
 use std::path::Path;
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 use uuid::{uuid, Uuid};
 
 impl DBLayer {
@@ -41,46 +40,6 @@ impl DBLayer {
             templates: Mutex::new(templates),
             cache: Cache::new(template_names),
         }
-    }
-
-    pub async fn get_latest(&self, template: &String) -> Result<Option<Uuid>, GetError> {
-        let tree = self.db.open_tree(template)?;
-
-        match tree.last()? {
-            None => {
-                Ok(None)
-            }
-            Some((id, _)) => {
-                Ok(Some(Uuid::from_slice(&id)?))
-            }
-        }
-    }
-
-    pub fn get_all_pairs(&self, template: &String) -> Result<Vec<(Uuid, Form)>, GetError> {
-        let tree = self.db.open_tree(template)?;
-
-        Ok(tree
-            .iter()
-            .map(|pair| { self.decode_pair(pair.unwrap()) })
-            .collect()
-        )
-    }
-
-    pub fn get_range(&self, template: &String, range: Range<Uuid>) -> Result<Vec<(Uuid, Form)>, GetError> {
-        let tree = self.db.open_tree(template)?;
-
-        Ok(tree
-            .range(range)
-            .map(|pair| { self.decode_pair(pair.unwrap()) })
-            .collect()
-        )
-    }
-
-    fn decode_pair(&self, pair: (IVec, IVec)) -> (Uuid, Form) {
-        let uuid = Uuid::from_slice(&pair.0).unwrap();
-        let (form, _) = bincode::decode_from_slice(&pair.1, self.byte_config).unwrap();
-
-        (uuid, form)
     }
 
     pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, GetError> {
@@ -373,9 +332,6 @@ impl ResponseError for GetError {
             GetError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             GetError::TemplateDoesNotExist { .. } => StatusCode::BAD_REQUEST,
             GetError::NoScheduleForEvent { .. } => StatusCode::BAD_REQUEST,
-            GetError::NoStoredFormsForTemplate { .. } => StatusCode::OK,
-            GetError::BadUUID { .. } => StatusCode::BAD_REQUEST,
-            GetError::Timeout => StatusCode::OK
         }
     }
 
@@ -412,15 +368,6 @@ pub enum GetError {
 
     #[display(fmt = "There is not a schedule for event \"{event}\"")]
     NoScheduleForEvent { event: String },
-
-    #[display(fmt = "There are no forms stored for template \"{template}\"")]
-    NoStoredFormsForTemplate { template: String },
-
-    #[display(fmt = "The UUID \"{uuid}\" cannot be parsed")]
-    BadUUID { uuid: String },
-
-    #[display(fmt = "Timeout")]
-    Timeout,
 }
 
 #[derive(Debug, Display, Error)]
@@ -434,7 +381,6 @@ pub enum SubmitError {
     #[display(fmt = "Template \"{}\" does not exist", requested_template)]
     TemplateDoesNotExist { requested_template: String },
 }
-
 
 pub struct DBLayer {
     db: Db,
