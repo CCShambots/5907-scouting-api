@@ -1,8 +1,7 @@
 use crate::data::template::FieldDataType::{CheckBox, LongText, Number, Rating, ShortText, Title};
 use crate::data::{FieldData, Form};
 use serde::{Deserialize, Serialize};
-use serde_json::{Result, Value};
-use std::collections::HashSet;
+use std::result::Result;
 
 impl FormTemplate {
     pub fn new(name: &str, year: i64) -> Self {
@@ -20,23 +19,23 @@ impl FormTemplate {
         });
     }
 
-    pub fn validate_form(&self, form: &Form) -> bool {
+    pub fn validate_form(&self, form: &Form) -> Result<(), Error> {
         for x in &self.fields {
             if !matches!(x.data_type, Title) {
                 match form.get_field(&x.name) {
                     None => {
-                        return false;
+                        return Err(Error { template: self.name.clone() });
                     }
                     Some(data) => {
                         if !x.data_type_match(data) {
-                            return false;
+                            return Err(Error { template: self.name.clone() });
                         }
                     }
                 }
             }
         }
 
-        true
+        Ok(())
     }
 }
 
@@ -75,4 +74,8 @@ pub enum FieldDataType {
     Number,
     ShortText,
     LongText,
+}
+
+pub struct Error {
+    pub template: String
 }

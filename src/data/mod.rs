@@ -20,17 +20,17 @@ impl Form {
     }
 }
 
-#[derive(Default, Encode, Decode, Debug, Serialize, Deserialize)]
+#[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
 pub struct Form {
     fields: HashMap<String, FieldData>,
     pub scouter: String,
     pub team: i64,
     pub match_number: i64,
     pub event_key: String,
-    id: Option<u128>
+    id: Option<String>
 }
 
-#[derive(Encode, Decode, Debug, Serialize, Deserialize)]
+#[derive(Encode, Decode, Debug, Serialize, Deserialize, Clone)]
 pub enum FieldData {
     CheckBox(bool),
     Rating(i64),
@@ -43,7 +43,7 @@ pub enum FieldData {
 pub struct Schedule {
     pub event: String,
     pub shifts: Vec<Shift>,
-    id: Option<u128>
+    id: Option<String>
 }
 
 #[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
@@ -59,5 +59,5 @@ pub struct Scouter {
     name: String,
     team: i32,
     accuracy: f32,
-    id: Option<u128>
+    id: Option<String>
 }

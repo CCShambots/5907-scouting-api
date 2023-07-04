@@ -5,11 +5,13 @@ mod logic;
 use crate::data::db_layer::{Filter, GetError, SubmitError};
 use crate::data::{Form, Schedule};
 use crate::settings::Settings;
-use crate::logic::AppState;
+use crate::logic::{AppState, Error};
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
+use uuid::Uuid;
+use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -60,6 +62,7 @@ async fn run_server() -> std::io::Result<()> {
             .service(set_schedule)
             .service(get_schedule)
             .service(get_shifts)
+            .service(delete_form)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
@@ -70,10 +73,33 @@ async fn run_server() -> std::io::Result<()> {
 async fn submit_form(
     data: Data<AppState>,
     path: Path<String>,
-    form: Json<Form>,
-) -> Result<HttpResponse, SubmitError> {
-    data.submit_form(path.into_inner(), &form.0).await?;
+    form: Json<Vec<Form>>,
+) -> Result<HttpResponse, Error> {
+    let msg = Internal::Form(FormMessage::Add(
+        AddFormData {
+            template: path.into_inner(),
+            forms: form.0,
+        }
+    ));
 
+    data.mutate(InternalMessage::new(msg)).await?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+#[actix_web::delete("/template/{template}/delete/{id}")]
+async fn delete_form(
+    data: Data<AppState>,
+    path: Path<(String, Uuid)>
+) -> Result<HttpResponse, Error> {
+    let inner = path.into_inner();
+    let msg = Internal::Form(FormMessage::Remove(
+        RemoveFormData {
+            template: inner.0,
+            id: inner.1
+        }
+    ));
+
+    data.mutate(InternalMessage::new(msg)).await?;
     Ok(HttpResponse::Ok().finish())
 }
 

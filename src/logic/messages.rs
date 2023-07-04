@@ -2,6 +2,15 @@ use uuid::Uuid;
 use crate::data::{Form, Schedule, Scouter};
 use crate::data::template::FormTemplate;
 
+impl InternalMessage {
+    pub fn new(msg: Internal) -> Self {
+        Self {
+            msg,
+            id: Uuid::new_v4()
+        }
+    }
+}
+
 pub struct InternalMessage {
     pub id: Uuid,
     pub msg: Internal
@@ -34,10 +43,15 @@ pub enum TemplateMessage {
 
 pub enum FormMessage {
     Add(AddFormData),
-    Remove(Uuid)
+    Remove(RemoveFormData)
+}
+
+pub struct RemoveFormData {
+    pub template: String,
+    pub id: Uuid
 }
 
 pub struct AddFormData {
-    template: String,
-    form: Vec<Form>
+    pub template: String,
+    pub forms: Vec<Form>
 }

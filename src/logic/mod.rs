@@ -1,6 +1,10 @@
-mod messages;
+pub mod messages;
 
 use std::fmt::{Debug, Display, Formatter};
+use actix_web::http::StatusCode;
+use actix_web::{HttpResponse, ResponseError};
+use actix_web::body::BoxBody;
+use actix_web::http::header::ContentType;
 use derive_more::{Display, Error};
 use crate::data::db_layer::{DBLayer, Filter, GetError, SubmitError};
 use crate::data::template::FormTemplate;
@@ -8,7 +12,7 @@ use crate::data::{Form, Schedule, Shift};
 use crate::settings::Settings;
 use sled::Db;
 use uuid::Uuid;
-use crate::logic::messages::{FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
+use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
 
 impl AppState {
     pub fn new(db: Db, config: Settings) -> Self {
@@ -35,7 +39,12 @@ impl AppState {
     }
 
     async fn handle_form_message(&self, message: FormMessage) -> Result<(), Error> {
-        todo!()
+        //erm what the freak
+
+        match message {
+            FormMessage::Add(data) => self.submit_forms(data).await,
+            FormMessage::Remove(data) => self.db_layer.remove_form(data.template, data.id).await
+        }.map_err(|err| err.into())
     }
 
     async fn handle_template_message(&self, message: TemplateMessage) -> Result<(), Error> {
@@ -66,8 +75,8 @@ impl AppState {
         self.db_layer.get(template, filter).await
     }
 
-    pub async fn submit_form(&self, template: String, form: &Form) -> Result<(), SubmitError> {
-        self.db_layer.submit_form(template, form).await
+    async fn submit_forms(&self, form: AddFormData) -> Result<(), SubmitError> {
+        self.db_layer.submit_forms(form.template, form.forms).await
     }
 
     pub async fn get_schedule(&self, event: String) -> Result<Schedule, GetError> {
@@ -88,7 +97,34 @@ pub struct AppState {
     config: Settings,
 }
 
-#[derive(Debug)]
+impl ResponseError for Error {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            Error::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            _ => StatusCode::BAD_REQUEST
+        }
+    }
+
+    fn error_response(&self) -> HttpResponse<BoxBody> {
+        HttpResponse::build(self.status_code())
+            .insert_header(ContentType::json())
+            .body(self.to_string())
+    }
+}
+
+impl From<SubmitError> for Error {
+    fn from(value: SubmitError) -> Self {
+        match value {
+            SubmitError::Internal => Self::Internal,
+            SubmitError::FormDoesNotFollowTemplate { requested_template } =>
+                Self::FormDoesNotFollowTemplate { template: requested_template },
+            SubmitError::TemplateDoesNotExist { requested_template } =>
+                Self::TemplateDoesNotExist { template: requested_template }
+        }
+    }
+}
+
+#[derive(Debug, Display, Error)]
 pub enum Error {
     Internal,
     UuidDoesNotExist { uuid: Uuid },
@@ -96,5 +132,5 @@ pub enum Error {
     ScouterDoesNotExist { scouter: String } ,
     ScheduleDoesNotExist { schedule: String },
     TemplateNameReserved { name: String },
-    FormDoesNotFollowTemplate { forms: Vec<Form> }
+    FormDoesNotFollowTemplate { template: String }
 }

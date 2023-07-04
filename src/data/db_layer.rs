@@ -1,6 +1,6 @@
 use crate::data::db_layer::CacheInput::{Event, Match, Scouter, Team};
 use crate::data::db_layer::SubmitError::{FormDoesNotFollowTemplate, TemplateDoesNotExist};
-use crate::data::template::FormTemplate;
+use crate::data::template::{Error, FormTemplate};
 use crate::data::{Form, Schedule, Shift};
 use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
@@ -10,7 +10,7 @@ use bincode::config::{BigEndian, Configuration};
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::{Display, Error};
 use serde::Deserialize;
-use sled::{Db, IVec};
+use sled::{Batch, Db, IVec};
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -90,32 +90,38 @@ impl DBLayer {
 
         Ok(schedule
             .shifts
-            .iter()
+            .into_iter()
             .filter(|shift| shift.scouter == scouter)
-            .cloned()
-            .collect())
+            .collect()
+        )
     }
 
-    pub async fn submit_form(&self, template: String, form: &Form) -> Result<(), SubmitError> {
-        if let Some(temp) = self.templates.lock().await.get(&template) {
-            if !temp.validate_form(form) {
-                return Err(FormDoesNotFollowTemplate {
-                    requested_template: template,
-                });
-            }
-        } else {
-            return Err(TemplateDoesNotExist {
-                requested_template: template,
-            });
+    pub async fn submit_forms(&self, template: String, forms: Vec<Form>) -> Result<(), SubmitError> {
+        let mut op = Batch::default();
+        let template_tree = self.db.open_tree(&template)?;
+        let temp = self.templates.lock().await
+            .get(&template)
+            .ok_or(TemplateDoesNotExist { requested_template: template.clone() })?
+            .clone();
+
+        for form in forms.clone().iter_mut() {
+            temp.validate_form(form)?;
+
+            let uuid = Uuid::try_parse(form.id.get_or_insert(Uuid::new_v4().to_string()))?;
+
+            let encoded_form = bincode::encode_to_vec(&*form, self.byte_config)?;
+
+            op.insert(uuid.as_bytes(), encoded_form);
+            self.update_cache(form, uuid, &template).await?;
         }
 
-        let template_tree = self.db.open_tree(template.clone())?;
-        let encoded_form = bincode::encode_to_vec(form, self.byte_config)?;
-        let uuid = Uuid::new_v4();
+        template_tree.apply_batch(op)?;
 
-        template_tree.insert(uuid, encoded_form)?;
-        self.update_cache(form, uuid, &template).await?;
+        Ok(())
+    }
 
+    pub async fn remove_form(&self, template: String, id: Uuid) -> Result<(), SubmitError> {
+        self.db.open_tree(&template)?.remove(id)?;
         Ok(())
     }
 
@@ -323,6 +329,18 @@ impl From<serde_json::Error> for GetError {
 impl From<GetError> for SubmitError {
     fn from(_: GetError) -> Self {
         SubmitError::Internal
+    }
+}
+
+impl From<crate::data::template::Error> for SubmitError {
+    fn from(v: Error) -> Self {
+        TemplateDoesNotExist { requested_template: v.template }
+    }
+}
+
+impl From<uuid::Error> for SubmitError {
+    fn from(_: uuid::Error) -> Self {
+        Self::Internal
     }
 }
 
