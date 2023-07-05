@@ -11,7 +11,7 @@ use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
 use uuid::Uuid;
-use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData};
+use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData, ScheduleMessage};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -63,6 +63,7 @@ async fn run_server() -> std::io::Result<()> {
             .service(get_schedule)
             .service(get_shifts)
             .service(delete_form)
+            .service(delete_schedule)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
@@ -107,10 +108,25 @@ async fn delete_form(
 async fn set_schedule(
     data: Data<AppState>,
     schedule: Json<Schedule>,
-) -> Result<HttpResponse, SubmitError> {
-    data.set_schedule(schedule.event.clone(), schedule.into_inner())
-        .await?;
+) -> Result<HttpResponse, Error> {
+    let msg = Internal::Schedule(ScheduleMessage::Modify(
+        schedule.into_inner()
+    ));
 
+    data.mutate(InternalMessage::new(msg)).await?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+#[actix_web::delete("/schedules/{event}/delete")]
+async fn delete_schedule(
+    data: Data<AppState>,
+    path: Path<String>
+) -> Result<HttpResponse, Error> {
+    let msg = Internal::Schedule(ScheduleMessage::Remove(
+        path.into_inner()
+    ));
+
+    data.mutate(InternalMessage::new(msg)).await?;
     Ok(HttpResponse::Ok().finish())
 }
 
@@ -142,10 +158,10 @@ async fn get_shifts(
     path: Path<(String, String)>,
 ) -> Result<HttpResponse, GetError> {
     let path_data = path.into_inner();
-    Ok(HttpResponse::Ok().json(data.get_shifts(path_data.0, path_data.1).await?))
+    Ok(HttpResponse::Ok().json(data.get_shifts(&path_data.0, &path_data.1).await?))
 }
 
 #[actix_web::get("/schedules/{event}")]
 async fn get_schedule(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, GetError> {
-    Ok(HttpResponse::Ok().json(data.get_schedule(path.into_inner()).await?))
+    Ok(HttpResponse::Ok().json(data.get_schedule(&path.into_inner()).await?))
 }

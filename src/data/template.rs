@@ -53,20 +53,20 @@ impl FieldTemplate {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct FieldTemplate {
     data_type: FieldDataType,
     name: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FormTemplate {
     fields: Vec<FieldTemplate>,
     pub name: String,
     year: i64,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 pub enum FieldDataType {
     Title,
     CheckBox,

@@ -1,5 +1,5 @@
 use crate::data::db_layer::CacheInput::{Event, Match, Scouter, Team};
-use crate::data::db_layer::SubmitError::{FormDoesNotFollowTemplate, TemplateDoesNotExist};
+use crate::data::db_layer::SubmitError::{FormDoesNotExist, FormDoesNotFollowTemplate, TemplateDoesNotExist};
 use crate::data::template::{Error, FormTemplate};
 use crate::data::{Form, Schedule, Shift};
 use actix_web::body::BoxBody;
@@ -19,6 +19,7 @@ use std::ops::BitAnd;
 use std::path::Path;
 use tokio::sync::Mutex;
 use uuid::{uuid, Uuid};
+use crate::logic::Error::ScheduleDoesNotExist;
 
 impl DBLayer {
     pub fn new(db: Db, template_path: &str) -> Self {
@@ -64,11 +65,11 @@ impl DBLayer {
         )
     }
 
-    pub async fn get_schedule(&self, event: String) -> Result<Schedule, GetError> {
+    pub async fn get_schedule(&self, event: &str) -> Result<Schedule, GetError> {
         let tree = self.db.open_tree("schedules")?;
 
         if !tree.contains_key(&event)? {
-            return Err(GetError::NoScheduleForEvent { event });
+            return Err(GetError::NoScheduleForEvent { event: event.into() });
         }
 
         let (decoded, _): (Schedule, usize) =
@@ -77,7 +78,7 @@ impl DBLayer {
         Ok(decoded)
     }
 
-    pub async fn set_schedule(&self, event: String, schedule: Schedule) -> Result<(), SubmitError> {
+    pub async fn set_schedule(&self, event: &str, schedule: &Schedule) -> Result<(), SubmitError> {
         let tree = self.db.open_tree("schedules")?;
 
         tree.insert(event, bincode::encode_to_vec(schedule, self.byte_config)?)?;
@@ -85,7 +86,19 @@ impl DBLayer {
         Ok(())
     }
 
-    pub async fn get_shifts(&self, event: String, scouter: String) -> Result<Vec<Shift>, GetError> {
+    pub async fn remove_schedule(&self, event: &str) -> Result<(), SubmitError> {
+        let tree = self.db.open_tree("schedules")?;
+
+        match tree.contains_key(event)? {
+            true => {
+                tree.remove(event)?;
+                Ok(())
+            },
+            false => Err(SubmitError::NoScheduleForEvent { event: event.into() })
+        }
+    }
+
+    pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, GetError> {
         let schedule = self.get_schedule(event).await?;
 
         Ok(schedule
@@ -96,12 +109,12 @@ impl DBLayer {
         )
     }
 
-    pub async fn submit_forms(&self, template: String, forms: Vec<Form>) -> Result<(), SubmitError> {
+    pub async fn submit_forms(&self, template: &str, forms: &Vec<Form>) -> Result<(), SubmitError> {
         let mut op = Batch::default();
         let template_tree = self.db.open_tree(&template)?;
         let temp = self.templates.lock().await
-            .get(&template)
-            .ok_or(TemplateDoesNotExist { requested_template: template.clone() })?
+            .get(template)
+            .ok_or(TemplateDoesNotExist { requested_template: template.into() })?
             .clone();
 
         for form in forms.clone().iter_mut() {
@@ -112,7 +125,7 @@ impl DBLayer {
             let encoded_form = bincode::encode_to_vec(&*form, self.byte_config)?;
 
             op.insert(uuid.as_bytes(), encoded_form);
-            self.update_cache(form, uuid, &template).await?;
+            self.update_cache(form, uuid, template).await?;
         }
 
         template_tree.apply_batch(op)?;
@@ -120,9 +133,16 @@ impl DBLayer {
         Ok(())
     }
 
-    pub async fn remove_form(&self, template: String, id: Uuid) -> Result<(), SubmitError> {
-        self.db.open_tree(&template)?.remove(id)?;
-        Ok(())
+    pub async fn remove_form(&self, template: &str, id: Uuid) -> Result<(), SubmitError> {
+        let tree = self.db.open_tree(template)?;
+
+        match tree.contains_key(id)? {
+            true => {
+                tree.remove(id)?;
+                Ok(())
+            },
+            false => Err(FormDoesNotExist { id })
+        }
     }
 
     pub async fn get_templates(&self) -> Vec<String> {
@@ -210,7 +230,7 @@ impl DBLayer {
         &self,
         form: &Form,
         uuid: Uuid,
-        template: &String,
+        template: &str,
     ) -> Result<(), GetError> {
         self.cache.add(Team(form.team), uuid, template).await?;
         self.cache
@@ -240,7 +260,7 @@ impl Cache {
         out
     }
 
-    async fn add(&self, key: CacheInput, val: Uuid, template: &String) -> Result<(), GetError> {
+    async fn add(&self, key: CacheInput, val: Uuid, template: &str) -> Result<(), GetError> {
         let mut map = self.try_get_template_cache(template)?.lock().await;
 
         match map.get_mut(&key) {
@@ -263,7 +283,7 @@ impl Cache {
 
     fn try_get_template_cache(
         &self,
-        template: &String,
+        template: &str,
     ) -> Result<&Mutex<HashMap<CacheInput, HashSet<Uuid>>>, GetError> {
         match self.cache.get(template) {
             None => Err(GetError::Internal),
@@ -366,6 +386,8 @@ impl ResponseError for SubmitError {
             SubmitError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             SubmitError::FormDoesNotFollowTemplate { .. } => StatusCode::BAD_REQUEST,
             SubmitError::TemplateDoesNotExist { .. } => StatusCode::BAD_REQUEST,
+            SubmitError::FormDoesNotExist { .. } => StatusCode::BAD_REQUEST,
+            SubmitError::NoScheduleForEvent { .. } => StatusCode::BAD_REQUEST
         }
     }
 
@@ -398,6 +420,10 @@ pub enum SubmitError {
 
     #[display(fmt = "Template \"{}\" does not exist", requested_template)]
     TemplateDoesNotExist { requested_template: String },
+
+    FormDoesNotExist { id: Uuid },
+
+    NoScheduleForEvent { event: String }
 }
 
 pub struct DBLayer {

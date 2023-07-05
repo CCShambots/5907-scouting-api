@@ -1,6 +1,8 @@
 pub mod messages;
 
 use std::fmt::{Debug, Display, Formatter};
+use std::io::{SeekFrom, Write};
+use std::path::Path;
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
 use actix_web::body::BoxBody;
@@ -11,11 +13,20 @@ use crate::data::template::FormTemplate;
 use crate::data::{Form, Schedule, Shift};
 use crate::settings::Settings;
 use sled::Db;
+use tokio::fs::{File, OpenOptions, read};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
 use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
 
 impl AppState {
     pub fn new(db: Db, config: Settings) -> Self {
+        let transaction_path = Path::new(&config.transaction_log_path);
+
+        if !transaction_path.exists() {
+            std::fs::File::create(transaction_path).unwrap().write_all("[]".as_bytes()).unwrap();
+        }
+
+
         Self {
             db_layer: DBLayer::new(db, "templates"),
             config,
@@ -23,40 +34,78 @@ impl AppState {
     }
 
     pub async fn mutate(&self, message: InternalMessage) -> Result<(), Error> {
-        match message.msg {
+        match &message.msg {
             Internal::Form(msg) =>
-                self.handle_form_message(msg).await,
+                self.handle_form_message(msg).await?,
 
             Internal::Template(msg) =>
-                self.handle_template_message(msg).await,
+                self.handle_template_message(msg).await?,
 
             Internal::Scouter(msg) =>
-                self.handle_scouter_message(msg).await,
+                self.handle_scouter_message(msg).await?,
 
             Internal::Schedule(msg) =>
-                self.handle_schedule_message(msg).await
+                self.handle_schedule_message(msg).await?
         }
+
+        self.log_mutation(&message).await?;
+        self.print_transaction_log().await?;
+
+        Ok(())
     }
 
-    async fn handle_form_message(&self, message: FormMessage) -> Result<(), Error> {
+    async fn print_transaction_log(&self) -> Result<(), Error> {
+        let transaction_log =
+            read(&self.config.transaction_log_path).await?;
+
+        let de: Vec<InternalMessage> = serde_json::de::from_slice(&transaction_log)?;
+
+        println!("{:?}", de);
+
+        Ok(())
+    }
+
+    async fn log_mutation(&self, message: &InternalMessage) -> Result<(), Error> {
+        let mut transaction_log = OpenOptions::default()
+            .write(true)
+            .read(true)
+            .open(&self.config.transaction_log_path).await?;
+
+        let ser = serde_json::to_string(&message)?;
+
+        if transaction_log.seek(SeekFrom::End(-1)).await? > 3 {
+            transaction_log.write_all(",\n".as_bytes()).await?;
+        }
+
+        transaction_log.write_all(ser.as_bytes()).await?;
+        transaction_log.write_all("]".as_bytes()).await?;
+
+        Ok(())
+    }
+
+    async fn handle_form_message(&self, message: &FormMessage) -> Result<(), Error> {
         //erm what the freak
 
         match message {
             FormMessage::Add(data) => self.submit_forms(data).await,
-            FormMessage::Remove(data) => self.db_layer.remove_form(data.template, data.id).await
+            FormMessage::Remove(data) => self.db_layer.remove_form(&data.template, data.id).await
         }.map_err(|err| err.into())
     }
 
-    async fn handle_template_message(&self, message: TemplateMessage) -> Result<(), Error> {
+    async fn handle_template_message(&self, message: &TemplateMessage) -> Result<(), Error> {
         todo!()
     }
 
-    async fn handle_scouter_message(&self, message: ScouterMessage) -> Result<(), Error> {
+    async fn handle_scouter_message(&self, message: &ScouterMessage) -> Result<(), Error> {
         todo!()
     }
 
-    async fn handle_schedule_message(&self, message: ScheduleMessage) -> Result<(), Error> {
-        todo!()
+    async fn handle_schedule_message(&self, message: &ScheduleMessage) -> Result<(), Error> {
+        match message {
+            ScheduleMessage::Add(data) | ScheduleMessage::Modify(data) =>
+                self.db_layer.set_schedule(&data.event, data).await,
+            ScheduleMessage::Remove(data) => self.db_layer.remove_schedule(data).await
+        }.map_err(|err| err.into())
     }
 
     pub async fn get_templates(&self) -> Vec<String> {
@@ -75,19 +124,15 @@ impl AppState {
         self.db_layer.get(template, filter).await
     }
 
-    async fn submit_forms(&self, form: AddFormData) -> Result<(), SubmitError> {
-        self.db_layer.submit_forms(form.template, form.forms).await
+    async fn submit_forms(&self, form: &AddFormData) -> Result<(), SubmitError> {
+        self.db_layer.submit_forms(&form.template, &form.forms).await
     }
 
-    pub async fn get_schedule(&self, event: String) -> Result<Schedule, GetError> {
+    pub async fn get_schedule(&self, event: &str) -> Result<Schedule, GetError> {
         self.db_layer.get_schedule(event).await
     }
 
-    pub async fn set_schedule(&self, event: String, schedule: Schedule) -> Result<(), SubmitError> {
-        self.db_layer.set_schedule(event, schedule).await
-    }
-
-    pub async fn get_shifts(&self, event: String, scouter: String) -> Result<Vec<Shift>, GetError> {
+    pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, GetError> {
         self.db_layer.get_shifts(event, scouter).await
     }
 }
@@ -112,6 +157,18 @@ impl ResponseError for Error {
     }
 }
 
+impl From<serde_json::Error> for Error {
+    fn from(_: serde_json::Error) -> Self {
+        Self::Internal
+    }
+}
+
+impl From<tokio::io::Error> for Error {
+    fn from(_: std::io::Error) -> Self {
+        Self::Internal
+    }
+}
+
 impl From<SubmitError> for Error {
     fn from(value: SubmitError) -> Self {
         match value {
@@ -119,7 +176,11 @@ impl From<SubmitError> for Error {
             SubmitError::FormDoesNotFollowTemplate { requested_template } =>
                 Self::FormDoesNotFollowTemplate { template: requested_template },
             SubmitError::TemplateDoesNotExist { requested_template } =>
-                Self::TemplateDoesNotExist { template: requested_template }
+                Self::TemplateDoesNotExist { template: requested_template },
+            SubmitError::FormDoesNotExist { id } =>
+                Self::UuidDoesNotExist { uuid: id },
+            SubmitError::NoScheduleForEvent { event } =>
+                Self::ScheduleDoesNotExist { schedule: event }
         }
     }
 }

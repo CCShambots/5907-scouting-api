@@ -46,6 +46,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             template_directory: "templates".to_owned(),
+            transaction_log_path: "transaction_log.json".to_owned(),
             parent_address: None,
             database: Database::default(),
         }
@@ -62,5 +63,6 @@ pub struct Database {
 pub struct Settings {
     pub template_directory: String,
     pub parent_address: Option<String>,
+    pub transaction_log_path: String,
     pub database: Database,
 }
