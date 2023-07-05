@@ -17,3 +17,4 @@ Cargo.lock
 .idea/
 database/*
 /config.toml
+/transaction_log.json
