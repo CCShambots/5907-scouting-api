@@ -6,40 +6,36 @@ use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
-use bincode::config::{BigEndian, Configuration};
+use bincode::config::{Configuration};
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::{Display, Error};
 use serde::Deserialize;
-use sled::{Batch, Db, IVec};
+use sled::{Batch, Db, Transactional};
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::read_to_string;
+use std::io::Read;
 use std::ops::BitAnd;
 use std::path::Path;
-use tokio::sync::Mutex;
-use uuid::{uuid, Uuid};
-use crate::logic::Error::ScheduleDoesNotExist;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+use uuid::{Uuid};
+
 
 impl DBLayer {
-    pub fn new(db: Db, template_path: &str) -> Self {
-        let mut templates = HashMap::new();
-        let mut template_names: Vec<String> = Vec::new();
-        let dir = Path::new(template_path).read_dir().unwrap();
-
-        for f in dir {
-            let ser: FormTemplate =
-                serde_json::from_str(&read_to_string(f.unwrap().path()).unwrap()).unwrap();
-
-            template_names.push(ser.name.clone());
-            templates.insert(ser.name.clone(), ser);
-        }
-
+    pub fn new(db: Db) -> Self {
         Self {
             db,
             byte_config: bincode::config::standard(),
-            templates: Mutex::new(templates),
-            cache: Cache::new(template_names),
+            cache: RwLock::new(Cache::new()),
+            //avoid buffoonery and or shenanigans
+            reserved_trees: HashSet::from([
+                "__sled__default".into(),
+                "schedules".into(),
+                "scouters".into(),
+                "templates".into()
+            ])
         }
     }
 
@@ -68,7 +64,7 @@ impl DBLayer {
     pub async fn get_schedule(&self, event: &str) -> Result<Schedule, GetError> {
         let tree = self.db.open_tree("schedules")?;
 
-        if !tree.contains_key(&event)? {
+        if !tree.contains_key(event)? {
             return Err(GetError::NoScheduleForEvent { event: event.into() });
         }
 
@@ -109,15 +105,14 @@ impl DBLayer {
         )
     }
 
-    pub async fn submit_forms(&self, template: &str, forms: &Vec<Form>) -> Result<(), SubmitError> {
+    pub async fn submit_forms(&self, template: &str, forms: &[Form]) -> Result<(), SubmitError> {
         let mut op = Batch::default();
-        let template_tree = self.db.open_tree(&template)?;
-        let temp = self.templates.lock().await
-            .get(template)
-            .ok_or(TemplateDoesNotExist { requested_template: template.into() })?
-            .clone();
+        let template_tree = self.db.open_tree(template)?;
+        let temp = self.get_template(template).await
+            .map_err(|_| TemplateDoesNotExist { requested_template: template.into() })?;
 
-        for form in forms.clone().iter_mut() {
+
+        for form in forms.to_vec().iter_mut() {
             temp.validate_form(form)?;
 
             let uuid = Uuid::try_parse(form.id.get_or_insert(Uuid::new_v4().to_string()))?;
@@ -125,6 +120,7 @@ impl DBLayer {
             let encoded_form = bincode::encode_to_vec(&*form, self.byte_config)?;
 
             op.insert(uuid.as_bytes(), encoded_form);
+
             self.update_cache(form, uuid, template).await?;
         }
 
@@ -145,14 +141,51 @@ impl DBLayer {
         }
     }
 
-    pub async fn get_templates(&self) -> Vec<String> {
-        self.templates.lock().await.keys().cloned().collect()
+    pub async fn add_template(&self, template: &FormTemplate) -> Result<(), SubmitError> {
+        let tree = self.db.open_tree("templates")?;
+
+        match !tree.contains_key(&template.name)? {
+            true => {
+                self.cache.write().await.add_template(&template.name)?;
+                self.set_template(template).await
+            },
+            false => Ok(())
+        }
     }
 
-    pub async fn get_template(&self, template: String) -> Result<FormTemplate, GetError> {
-        match self.templates.lock().await.get(&template) {
-            Some(temp) => Ok(temp.clone()),
-            None => Err(GetError::TemplateDoesNotExist { template }),
+    pub async fn set_template(&self, template: &FormTemplate) -> Result<(), SubmitError> {
+        let tree = self.db.open_tree("templates")?;
+
+        tree.insert(&template.name, bincode::encode_to_vec(template, self.byte_config)?)?;
+
+        Ok(())
+    }
+
+    pub async fn remove_template(&self, name: &str) -> Result<(), SubmitError> {
+        let tree = self.db.open_tree("templates")?;
+
+        match tree.contains_key(name)? {
+            true => {
+                tree.remove(name)?;
+                self.cache.write().await.remove_template(name)
+            },
+            false => Err(TemplateDoesNotExist { requested_template: name.into() })
+        }
+    }
+
+    pub async fn get_templates(&self) -> Vec<String> {
+        self.db.open_tree("templates")
+            .unwrap()
+            .iter()
+            .keys()
+            .map(|k| String::from_utf8(k.unwrap().to_vec()).unwrap())
+            .collect()
+    }
+
+    pub async fn get_template(&self, template: &str) -> Result<FormTemplate, GetError> {
+        match self.db.open_tree("templates")?.get(template)? {
+            Some(temp) => Ok(bincode::decode_from_slice(&temp, self.byte_config)?.0),
+            None => Err(GetError::TemplateDoesNotExist { template: template.into() }),
         }
     }
 
@@ -175,24 +208,25 @@ impl DBLayer {
     ) -> Result<Vec<HashSet<Uuid>>, GetError> {
         let mut out: Vec<HashSet<Uuid>> = Vec::new();
         let mut num_filters: i64 = 0;
+        let lock = self.cache.read().await;
 
         if let Some(team) = filter.team {
-            out.push(self.cache.get(Team(team), template).await?);
+            out.push(lock.get(Team(team), template)?);
             num_filters += 1;
         }
 
         if let Some(match_number) = filter.match_number {
-            out.push(self.cache.get(Match(match_number), template).await?);
+            out.push(lock.get(Match(match_number), template)?);
             num_filters += 1;
         }
 
         if let Some(scouter) = &filter.scouter {
-            out.push(self.cache.get(Scouter(scouter.clone()), template).await?);
+            out.push(lock.get(Scouter(scouter.clone()), template)?);
             num_filters += 1;
         }
 
         if let Some(event) = &filter.event {
-            out.push(self.cache.get(Event(event.clone()), template).await?);
+            out.push(lock.get(Event(event.clone()), template)?);
             num_filters += 1;
         }
 
@@ -203,12 +237,17 @@ impl DBLayer {
         Ok(out)
     }
 
+    fn template_exists(&self, template: &str) -> bool {
+        self.db.open_tree("templates").unwrap().contains_key(template).unwrap()
+    }
+
     pub async fn build_cache(&self) -> Result<(), GetError> {
         for tree_name in self.db.tree_names() {
             let name = String::from_utf8(tree_name.to_vec()).unwrap();
 
-            if self.templates.lock().await.contains_key(&name) {
+            if self.template_exists(&name) {
                 println!("building for tree {}", name);
+                self.cache.write().await.add_template(&name).unwrap();
 
                 let tree = self.db.open_tree(tree_name)?;
 
@@ -232,36 +271,42 @@ impl DBLayer {
         uuid: Uuid,
         template: &str,
     ) -> Result<(), GetError> {
-        self.cache.add(Team(form.team), uuid, template).await?;
-        self.cache
-            .add(Match(form.match_number), uuid, template)
-            .await?;
-        self.cache
-            .add(Scouter(form.scouter.clone()), uuid, template)
-            .await?;
-        self.cache
-            .add(Event(form.event_key.clone()), uuid, template)
-            .await?;
+        let mut lock = self.cache.write().await;
+
+        lock.add(Team(form.team), uuid, template)?;
+        lock.add(Match(form.match_number), uuid, template)?;
+        lock.add(Scouter(form.scouter.clone()), uuid, template)?;
+        lock.add(Event(form.event_key.clone()), uuid, template)?;
 
         Ok(())
     }
 }
 
 impl Cache {
-    fn new(templates: Vec<String>) -> Self {
-        let mut out = Self {
-            cache: HashMap::new(),
-        };
-
-        for temp in templates {
-            out.cache.insert(temp, Mutex::new(HashMap::new()));
+    fn new() -> Self {
+        Self {
+            cache: HashMap::new()
         }
-
-        out
     }
 
-    async fn add(&self, key: CacheInput, val: Uuid, template: &str) -> Result<(), GetError> {
-        let mut map = self.try_get_template_cache(template)?.lock().await;
+    fn add_template(&mut self, template: &str) -> Result<(), SubmitError> {
+        if !self.cache.contains_key(template) {
+            self.cache.insert(template.to_owned(), HashMap::new());
+        }
+
+        Ok(())
+    }
+
+    fn remove_template(&mut self, template: &str) -> Result<(), SubmitError> {
+        self.cache.remove(template);
+
+        Ok(())
+    }
+
+    fn add(&mut self, key: CacheInput, val: Uuid, template: &str) -> Result<(), GetError> {
+        let map = self.cache
+            .get_mut(template)
+            .ok_or(GetError::TemplateDoesNotExist { template: template.into() })?;
 
         match map.get_mut(&key) {
             Some(cache) => {
@@ -275,27 +320,16 @@ impl Cache {
         Ok(())
     }
 
-    async fn clear(&mut self) {
-        for cache in &mut self.cache {
-            cache.1.lock().await.clear();
+    fn clear(&mut self) {
+        for cache in self.cache.iter_mut() {
+            cache.1.clear();
         }
     }
 
-    fn try_get_template_cache(
-        &self,
-        template: &str,
-    ) -> Result<&Mutex<HashMap<CacheInput, HashSet<Uuid>>>, GetError> {
-        match self.cache.get(template) {
-            None => Err(GetError::Internal),
-            Some(map) => Ok(map),
-        }
-    }
-
-    async fn get(&self, key: CacheInput, template: &String) -> Result<HashSet<Uuid>, GetError> {
-        match self
-            .try_get_template_cache(template)?
-            .lock()
-            .await
+    fn get(&self, key: CacheInput, template: &str) -> Result<HashSet<Uuid>, GetError> {
+        match self.cache
+            .get(template)
+            .ok_or(GetError::TemplateDoesNotExist { template: template.into() })?
             .get(&key)
         {
             Some(cache) => Ok(cache.clone()),
@@ -384,9 +418,9 @@ impl ResponseError for SubmitError {
     fn status_code(&self) -> StatusCode {
         match self {
             SubmitError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
-            SubmitError::FormDoesNotFollowTemplate { .. } => StatusCode::BAD_REQUEST,
-            SubmitError::TemplateDoesNotExist { .. } => StatusCode::BAD_REQUEST,
-            SubmitError::FormDoesNotExist { .. } => StatusCode::BAD_REQUEST,
+            FormDoesNotFollowTemplate { .. } => StatusCode::BAD_REQUEST,
+            TemplateDoesNotExist { .. } => StatusCode::BAD_REQUEST,
+            FormDoesNotExist { .. } => StatusCode::BAD_REQUEST,
             SubmitError::NoScheduleForEvent { .. } => StatusCode::BAD_REQUEST
         }
     }
@@ -428,14 +462,14 @@ pub enum SubmitError {
 
 pub struct DBLayer {
     db: Db,
-    cache: Cache,
+    cache: RwLock<Cache>,
     byte_config: Configuration,
-    templates: Mutex<HashMap<String, FormTemplate>>,
+    reserved_trees: HashSet<String>
 }
 
 #[derive(Default)]
 struct Cache {
-    cache: HashMap<String, Mutex<HashMap<CacheInput, HashSet<Uuid>>>>,
+    cache: HashMap<String, HashMap<CacheInput, HashSet<Uuid>>>,
 }
 
 #[derive(Eq, Hash, PartialEq)]

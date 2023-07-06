@@ -42,8 +42,7 @@ pub enum FieldData {
 #[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
 pub struct Schedule {
     pub event: String,
-    pub shifts: Vec<Shift>,
-    id: Option<String>
+    pub shifts: Vec<Shift>
 }
 
 #[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
@@ -58,6 +57,5 @@ pub struct Shift {
 pub struct Scouter {
     name: String,
     team: i32,
-    accuracy: f32,
-    id: Option<String>
+    accuracy: f32
 }

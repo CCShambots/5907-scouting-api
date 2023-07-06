@@ -42,7 +42,7 @@ pub enum ScouterMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TemplateMessage {
-    Add(Vec<FormTemplate>),
+    Add(FormTemplate),
     Modify(FormTemplate),
     Remove(String)
 }

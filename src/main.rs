@@ -11,7 +11,8 @@ use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
 use uuid::Uuid;
-use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData, ScheduleMessage};
+use crate::data::template::FormTemplate;
+use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData, ScheduleMessage, TemplateMessage};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -64,10 +65,52 @@ async fn run_server() -> std::io::Result<()> {
             .service(get_shifts)
             .service(delete_form)
             .service(delete_schedule)
+            .service(delete_template)
+            .service(modify_template)
+            .service(add_template)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
     .await
+}
+
+#[actix_web::delete("/template/delete/{template}")]
+async fn delete_template(
+    data: Data<AppState>,
+    path: Path<String>
+) -> Result<HttpResponse, Error> {
+    let msg = Internal::Template(TemplateMessage::Remove(
+        path.into_inner()
+    ));
+
+    data.mutate(InternalMessage::new(msg)).await?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+#[actix_web::post("/template/modify")]
+async fn modify_template(
+    data: Data<AppState>,
+    template: Json<FormTemplate>
+) -> Result<HttpResponse, Error> {
+    let msg = Internal::Template(TemplateMessage::Modify(
+        template.into_inner()
+    ));
+
+    data.mutate(InternalMessage::new(msg)).await?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+#[actix_web::post("/template/add")]
+async fn add_template(
+    data: Data<AppState>,
+    template: Json<FormTemplate>
+) -> Result<HttpResponse, Error> {
+    let msg = Internal::Template(TemplateMessage::Add(
+        template.into_inner()
+    ));
+
+    data.mutate(InternalMessage::new(msg)).await?;
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[actix_web::post("/template/{template}/submit")]
@@ -144,7 +187,7 @@ async fn teams(
 
 #[actix_web::get("/templates/{template}")]
 async fn get_template(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, GetError> {
-    Ok(HttpResponse::Ok().json(data.get_template(path.into_inner()).await?))
+    Ok(HttpResponse::Ok().json(data.get_template(&path.into_inner()).await?))
 }
 
 #[actix_web::get("/templates")]

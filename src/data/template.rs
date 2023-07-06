@@ -2,6 +2,7 @@ use crate::data::template::FieldDataType::{CheckBox, LongText, Number, Rating, S
 use crate::data::{FieldData, Form};
 use serde::{Deserialize, Serialize};
 use std::result::Result;
+use bincode::{Encode, Decode};
 
 impl FormTemplate {
     pub fn new(name: &str, year: i64) -> Self {
@@ -53,20 +54,20 @@ impl FieldTemplate {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Encode, Decode)]
 struct FieldTemplate {
     data_type: FieldDataType,
     name: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Encode, Decode)]
 pub struct FormTemplate {
     fields: Vec<FieldTemplate>,
     pub name: String,
     year: i64,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, Encode, Decode)]
 pub enum FieldDataType {
     Title,
     CheckBox,

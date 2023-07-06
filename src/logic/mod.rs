@@ -28,7 +28,7 @@ impl AppState {
 
 
         Self {
-            db_layer: DBLayer::new(db, "templates"),
+            db_layer: DBLayer::new(db),
             config,
         }
     }
@@ -93,7 +93,11 @@ impl AppState {
     }
 
     async fn handle_template_message(&self, message: &TemplateMessage) -> Result<(), Error> {
-        todo!()
+        match message {
+            TemplateMessage::Add(data) => self.db_layer.add_template(data).await,
+            TemplateMessage::Modify(data) => self.db_layer.set_template(data).await,
+            TemplateMessage::Remove(data) => self.db_layer.remove_template(data).await
+        }.map_err(|err| err.into())
     }
 
     async fn handle_scouter_message(&self, message: &ScouterMessage) -> Result<(), Error> {
@@ -112,7 +116,7 @@ impl AppState {
         self.db_layer.get_templates().await
     }
 
-    pub async fn get_template(&self, template: String) -> Result<FormTemplate, GetError> {
+    pub async fn get_template(&self, template: &str) -> Result<FormTemplate, GetError> {
         self.db_layer.get_template(template).await
     }
 
