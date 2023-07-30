@@ -101,7 +101,11 @@ impl AppState {
     }
 
     async fn handle_scouter_message(&self, message: &ScouterMessage) -> Result<(), Error> {
-        todo!()
+        match message {
+            ScouterMessage::Add(_) => { todo!() }
+            ScouterMessage::Modify(_) => { todo!() }
+            ScouterMessage::Remove(_) => { todo!() }
+        }
     }
 
     async fn handle_schedule_message(&self, message: &ScheduleMessage) -> Result<(), Error> {
