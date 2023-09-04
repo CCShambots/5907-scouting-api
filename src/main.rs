@@ -1,15 +1,18 @@
 mod data;
 mod settings;
-mod state;
+mod logic;
 
-use crate::data::db_layer::{Filter, GetError, SubmitError};
+use crate::data::db_layer::{Filter};
 use crate::data::{Form, Schedule};
 use crate::settings::Settings;
-use crate::state::AppState;
+use crate::logic::{AppState, Error};
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
+use uuid::Uuid;
+use crate::data::template::FormTemplate;
+use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData, ScheduleMessage, TemplateMessage};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -181,7 +184,7 @@ async fn teams(
     data: Data<AppState>,
     path: Path<String>,
     query: Query<Filter>,
-) -> Result<HttpResponse, GetError> {
+) -> Result<HttpResponse, Error> {
     let path_data = path.into_inner();
     let forms: Vec<Form> = data.get(path_data, query.0).await?;
 
@@ -189,12 +192,12 @@ async fn teams(
 }
 
 #[actix_web::get("/templates/{template}")]
-async fn get_template(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, GetError> {
+async fn get_template(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().json(data.get_template(&path.into_inner()).await?))
 }
 
 #[actix_web::get("/templates")]
-async fn templates(data: Data<AppState>) -> Result<HttpResponse, GetError> {
+async fn templates(data: Data<AppState>) -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().json(data.get_templates().await))
 }
 
@@ -202,12 +205,12 @@ async fn templates(data: Data<AppState>) -> Result<HttpResponse, GetError> {
 async fn get_shifts(
     data: Data<AppState>,
     path: Path<(String, String)>,
-) -> Result<HttpResponse, GetError> {
+) -> Result<HttpResponse, Error> {
     let path_data = path.into_inner();
     Ok(HttpResponse::Ok().json(data.get_shifts(&path_data.0, &path_data.1).await?))
 }
 
 #[actix_web::get("/schedules/{event}")]
-async fn get_schedule(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, GetError> {
+async fn get_schedule(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, Error> {
     Ok(HttpResponse::Ok().json(data.get_schedule(&path.into_inner()).await?))
 }
