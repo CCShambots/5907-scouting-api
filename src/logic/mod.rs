@@ -8,7 +8,7 @@ use actix_web::{HttpResponse, ResponseError};
 use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
 use derive_more::{Display, Error};
-use crate::data::db_layer::{DBLayer, Filter, Error as DBError};
+use crate::data::db_layer::{DBLayer, Filter, Error as DBError, ItemType};
 use crate::data::template::FormTemplate;
 use crate::data::{Form, Schedule, Shift};
 use crate::settings::Settings;
@@ -180,8 +180,12 @@ impl From<tokio::io::Error> for Error {
 impl From<DBError> for Error {
     fn from(value: DBError) -> Self {
         match value {
-            DBError::DoesNotExist(_) => todo!(),
-            DBError::FormDoesNotFollowTemplate { .. } => todo!(),
+            DBError::DoesNotExist(err) => match err {
+                ItemType::Template(template) => { Error::TemplateDoesNotExist { template } }
+                ItemType::Schedule(schedule) => { Error::ScheduleDoesNotExist { schedule } }
+                ItemType::Form(uuid) => { Error::UuidDoesNotExist { uuid } }
+            },
+            DBError::FormDoesNotFollowTemplate { template } => Error::FormDoesNotFollowTemplate { template },
             _ => Error::Internal
         }
     }
@@ -190,10 +194,22 @@ impl From<DBError> for Error {
 #[derive(Debug, Display, Error)]
 pub enum Error {
     Internal,
-    UuidDoesNotExist { uuid: Uuid },
-    TemplateDoesNotExist { template: String } ,
-    ScouterDoesNotExist { scouter: String } ,
+
+    #[display(fmt = "{uuid} is not tied to any items")]
+    UuidDoesNotExist { uuid: String },
+
+    #[display(fmt = "{template} does not exist")]
+    TemplateDoesNotExist { template: String },
+
+    #[display(fmt = "{scouter} does not exist")]
+    ScouterDoesNotExist { scouter: String },
+
+    #[display(fmt = "{schedule} does not exist")]
     ScheduleDoesNotExist { schedule: String },
+
+    #[display(fmt = "The name requested is a reserved word")]
     TemplateNameReserved { name: String },
+
+    #[display(fmt = "The form submitted does not follow the template requested")]
     FormDoesNotFollowTemplate { template: String }
 }

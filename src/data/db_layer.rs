@@ -396,34 +396,6 @@ pub enum ItemType {
     Form(String)
 }
 
-/*#[derive(Debug, Display, Error)]
-pub enum GetError {
-    #[display(fmt = "Internal error")]
-    Internal,
-
-    #[display(fmt = "The template \"{}\" does not exist", template)]
-    TemplateDoesNotExist { template: String },
-
-    #[display(fmt = "There is not a schedule for event \"{event}\"")]
-    NoScheduleForEvent { event: String },
-}
-
-#[derive(Debug, Display, Error)]
-pub enum SubmitError {
-    #[display(fmt = "Internal error")]
-    Internal,
-
-    #[display(fmt = "Form does not follow the template \"{}\"", requested_template)]
-    FormDoesNotFollowTemplate { requested_template: String },
-
-    #[display(fmt = "Template \"{}\" does not exist", requested_template)]
-    TemplateDoesNotExist { requested_template: String },
-
-    FormDoesNotExist { id: Uuid },
-
-    NoScheduleForEvent { event: String }
-}*/
-
 pub struct DBLayer {
     db: Db,
     cache: RwLock<Cache>,
