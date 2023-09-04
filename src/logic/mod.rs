@@ -16,7 +16,6 @@ use sled::Db;
 use tokio::fs::{File, OpenOptions, read};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
-use crate::logic::Error::Internal;
 use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
 
 impl AppState {
@@ -89,8 +88,8 @@ impl AppState {
 
         match message {
             FormMessage::Add(data) => self.submit_forms(data).await,
-            FormMessage::Remove(data) => self.db_layer.remove_form(&data.template, data.id).await
-        }.map_err(|err| err.into())
+            FormMessage::Remove(data) => self.db_layer.remove_form(&data.template, data.id).await.map_err(|err| err.into())
+        }
     }
 
     async fn handle_template_message(&self, message: &TemplateMessage) -> Result<(), Error> {
@@ -121,28 +120,28 @@ impl AppState {
         self.db_layer.get_templates().await
     }
 
-    pub async fn get_template(&self, template: &str) -> Result<FormTemplate, GetError> {
-        self.db_layer.get_template(template).await
+    pub async fn get_template(&self, template: &str) -> Result<FormTemplate, Error> {
+        self.db_layer.get_template(template).await.map_err(|err| err.into())
     }
 
-    pub async fn build_cache(&self) -> Result<(), GetError> {
-        self.db_layer.build_cache().await
+    pub async fn build_cache(&self) -> Result<(), Error> {
+        self.db_layer.build_cache().await.map_err(|err| err.into())
     }
 
-    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, GetError> {
-        self.db_layer.get(template, filter).await
+    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, Error> {
+        self.db_layer.get(template, filter).await.map_err(|err| err.into())
     }
 
-    async fn submit_forms(&self, form: &AddFormData) -> Result<(), SubmitError> {
-        self.db_layer.submit_forms(&form.template, &form.forms).await
+    async fn submit_forms(&self, form: &AddFormData) -> Result<(), Error> {
+        self.db_layer.submit_forms(&form.template, &form.forms).await.map_err(|err| err.into())
     }
 
-    pub async fn get_schedule(&self, event: &str) -> Result<Schedule, GetError> {
-        self.db_layer.get_schedule(event).await
+    pub async fn get_schedule(&self, event: &str) -> Result<Schedule, Error> {
+        self.db_layer.get_schedule(event).await.map_err(|err| err.into())
     }
 
-    pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, GetError> {
-        self.db_layer.get_shifts(event, scouter).await
+    pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {
+        self.db_layer.get_shifts(event, scouter).await.map_err(|err| err.into())
     }
 }
 
@@ -183,7 +182,7 @@ impl From<DBError> for Error {
         match value {
             DBError::DoesNotExist(_) => todo!(),
             DBError::FormDoesNotFollowTemplate { .. } => todo!(),
-            _ => Internal
+            _ => Error::Internal
         }
     }
 }
