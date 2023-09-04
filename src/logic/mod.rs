@@ -8,7 +8,7 @@ use actix_web::{HttpResponse, ResponseError};
 use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
 use derive_more::{Display, Error};
-use crate::data::db_layer::{DBLayer, Filter, GetError, SubmitError};
+use crate::data::db_layer::{DBLayer, Filter, Error as DBError};
 use crate::data::template::FormTemplate;
 use crate::data::{Form, Schedule, Shift};
 use crate::settings::Settings;
@@ -16,6 +16,7 @@ use sled::Db;
 use tokio::fs::{File, OpenOptions, read};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
+use crate::logic::Error::Internal;
 use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
 
 impl AppState {
@@ -177,18 +178,12 @@ impl From<tokio::io::Error> for Error {
     }
 }
 
-impl From<SubmitError> for Error {
-    fn from(value: SubmitError) -> Self {
+impl From<DBError> for Error {
+    fn from(value: DBError) -> Self {
         match value {
-            SubmitError::Internal => Self::Internal,
-            SubmitError::FormDoesNotFollowTemplate { requested_template } =>
-                Self::FormDoesNotFollowTemplate { template: requested_template },
-            SubmitError::TemplateDoesNotExist { requested_template } =>
-                Self::TemplateDoesNotExist { template: requested_template },
-            SubmitError::FormDoesNotExist { id } =>
-                Self::UuidDoesNotExist { uuid: id },
-            SubmitError::NoScheduleForEvent { event } =>
-                Self::ScheduleDoesNotExist { schedule: event }
+            DBError::DoesNotExist(_) => todo!(),
+            DBError::FormDoesNotFollowTemplate { .. } => todo!(),
+            _ => Internal
         }
     }
 }
