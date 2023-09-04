@@ -78,7 +78,7 @@ async fn submit_form(
     Ok(HttpResponse::Ok().finish())
 }
 
-#[actix_web::post("/status")]
+#[actix_web::get("/status")]
 async fn status() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
