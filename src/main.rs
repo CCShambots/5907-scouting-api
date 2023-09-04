@@ -1,18 +1,15 @@
 mod data;
 mod settings;
-mod logic;
+mod state;
 
 use crate::data::db_layer::{Filter, GetError, SubmitError};
 use crate::data::{Form, Schedule};
 use crate::settings::Settings;
-use crate::logic::{AppState, Error};
+use crate::state::AppState;
 use actix_cors::Cors;
 use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
-use uuid::Uuid;
-use crate::data::template::FormTemplate;
-use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData, ScheduleMessage, TemplateMessage};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -68,6 +65,7 @@ async fn run_server() -> std::io::Result<()> {
             .service(delete_template)
             .service(modify_template)
             .service(add_template)
+            .service(status)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
@@ -147,7 +145,12 @@ async fn delete_form(
     Ok(HttpResponse::Ok().finish())
 }
 
-#[actix_web::post("/schedules/submit")]
+#[actix_web::get("/status")]
+async fn status() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+#[actix_web::post("/schedules/{event}/submit")]
 async fn set_schedule(
     data: Data<AppState>,
     schedule: Json<Schedule>,
