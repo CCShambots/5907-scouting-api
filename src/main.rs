@@ -60,6 +60,7 @@ async fn run_server() -> std::io::Result<()> {
             .service(set_schedule)
             .service(get_schedule)
             .service(get_shifts)
+            .service(status)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
@@ -75,6 +76,11 @@ async fn submit_form(
     data.submit_form(path.into_inner(), &form.0).await?;
 
     Ok(HttpResponse::Ok().finish())
+}
+
+#[actix_web::post("/status")]
+async fn status() -> HttpResponse {
+    HttpResponse::Ok().finish()
 }
 
 #[actix_web::post("/schedules/{event}/submit")]
