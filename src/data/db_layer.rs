@@ -242,14 +242,15 @@ impl DBLayer {
     }
 
     pub async fn build_cache(&self) -> Result<(), Error> {
-        for tree_name in self.db.tree_names() {
-            let name = String::from_utf8(tree_name.to_vec()).unwrap();
+        for tree_name in self.db.open_tree("templates")?.iter().keys() {
+            let unwrapped = tree_name?;
+            let name = String::from_utf8(unwrapped.to_vec()).unwrap();
 
             if self.template_exists(&name) {
                 println!("building for tree {}", name);
                 self.cache.write().await.add_template(&name).unwrap();
 
-                let tree = self.db.open_tree(tree_name)?;
+                let tree = self.db.open_tree(unwrapped)?;
 
                 for p in tree.iter() {
                     let pair = p?;
