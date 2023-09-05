@@ -49,18 +49,7 @@ impl AppState {
         }
 
         self.log_mutation(&message).await?;
-        self.print_transaction_log().await?;
-
-        Ok(())
-    }
-
-    async fn print_transaction_log(&self) -> Result<(), Error> {
-        let transaction_log =
-            read(&self.config.transaction_log_path).await?;
-
-        let de: Vec<InternalMessage> = serde_json::de::from_slice(&transaction_log)?;
-
-        println!("{:?}", de);
+        println!("{:?}", &message);
 
         Ok(())
     }

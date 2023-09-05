@@ -376,7 +376,7 @@ impl From<serde_json::Error> for Error {
 
 impl From<crate::data::template::Error> for Error {
     fn from(v: TemplateError) -> Self {
-        Error::DoesNotExist(ItemType::Template(v.template))
+        Error::FormDoesNotFollowTemplate { template: v.template }
     }
 }
 
