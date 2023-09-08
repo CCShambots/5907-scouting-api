@@ -20,17 +20,17 @@ impl Form {
     }
 }
 
-#[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Form {
     fields: HashMap<String, FieldData>,
     pub scouter: String,
     pub team: i64,
     pub match_number: i64,
     pub event_key: String,
-    id: Option<String>
+    id: Uuid
 }
 
-#[derive(Encode, Decode, Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldData {
     CheckBox(bool),
     Rating(i64),
@@ -39,23 +39,26 @@ pub enum FieldData {
     LongText(String),
 }
 
-#[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Schedule {
     pub event: String,
-    pub shifts: Vec<Shift>
+    pub shifts: Vec<Shift>,
+    id: Uuid
 }
 
-#[derive(Default, Encode, Decode, Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Shift {
     pub scouter: String,
     pub station: u8,
     pub match_start: u32,
     pub match_end: u32,
+    id: Uuid
 }
 
-#[derive(Encode, Decode, Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Scouter {
     name: String,
     team: i32,
-    accuracy: f32
+    accuracy: f32,
+    id: Uuid
 }
