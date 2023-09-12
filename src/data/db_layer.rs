@@ -131,7 +131,7 @@ impl DBLayer {
         }
     }
 
-    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, Error> {
+    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<(Form, Uuid)>, Error> {
         let cache_result = self.get_uuids_from_filter(&template, &filter).await?;
         let mut set = cache_result[0].clone();
 
@@ -142,13 +142,23 @@ impl DBLayer {
         self.get_forms(&template, set.iter().collect())
     }
 
-    fn get_forms(&self, template: &String, uuids: Vec<&Uuid>) -> Result<Vec<Form>, Error> {
+    pub async fn get_form(&self, template: &str, uuid: Uuid) -> Result<(Form, Uuid), Error> {
+        let tree = self.db.open_tree(template)?;
+
+        if !tree.contains_key(uuid)? {
+            return Err(Error::DoesNotExist(ItemType::Form(template.into(), uuid)))
+        }
+
+        Ok((serde_cbor::de::from_slice(&tree.get(uuid)?.unwrap())?, uuid))
+    }
+
+    fn get_forms(&self, template: &String, uuids: Vec<&Uuid>) -> Result<Vec<(Form, Uuid)>, Error> {
         let tree = self.db.open_tree(template)?;
 
         Ok(
             uuids
                 .iter()
-                .map(|x| serde_cbor::de::from_slice(&tree.get(x).unwrap().unwrap()).unwrap())
+                .map(|x| (serde_cbor::de::from_slice(&tree.get(x).unwrap().unwrap()).unwrap(), **x))
                 .collect()
         )
     }

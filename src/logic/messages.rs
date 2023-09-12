@@ -35,7 +35,7 @@ pub enum AddType {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum EditType {
-    Form(Form, String),
+    Form(Form, Uuid, String),
     Schedule(Schedule),
     Scouter(Scouter),
     Shift(String, u64, Shift),
@@ -44,7 +44,7 @@ pub enum EditType {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RemoveType {
-    Form(Uuid),
+    Form(String, Uuid),
     Schedule(String),
     Shift(String, u64),
     Scouter(String),

@@ -17,7 +17,7 @@ use sled::Db;
 use tokio::fs::{File, OpenOptions, read};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
-use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, ScheduleMessage, ScouterMessage, TemplateMessage};
+use crate::logic::messages::{Internal, InternalMessage};
 
 impl AppState {
     pub fn new(db: Db, config: Settings) -> Self {
@@ -77,12 +77,12 @@ impl AppState {
         self.db_layer.build_cache().await.map_err(|err| err.into())
     }
 
-    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, Error> {
+    pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<(Form, Uuid)>, Error> {
         self.db_layer.get(template, filter).await.map_err(|err| err.into())
     }
 
-    async fn submit_forms(&self, form: &AddFormData) -> Result<(), Error> {
-        self.db_layer.submit_forms(&form.template, &form.forms).await.map_err(|err| err.into())
+    pub async fn get_form_from_id(&self, template: &str, id: Uuid) -> Result<(Form, Uuid), Error> {
+        Ok(self.db_layer.get_form(template, id).await?)
     }
 
     pub async fn get_schedule(&self, event: &str) -> Result<Schedule, Error> {
@@ -129,32 +129,23 @@ impl From<tokio::io::Error> for Error {
 impl From<DBError> for Error {
     fn from(value: DBError) -> Self {
         match value {
-            DBError::DoesNotExist(err) => match err {
-                ItemType::Template(template) => { Error::TemplateDoesNotExist { template } }
-                ItemType::Schedule(schedule) => { Error::ScheduleDoesNotExist { schedule } }
-                ItemType::Form(uuid) => { Error::UuidDoesNotExist { uuid } }
-            },
+            DBError::DoesNotExist(err) => Self::DoesNotExist { item_type: err },
+            DBError::ExistsAlready(err) => Self::ExistsAlready { item_type: err },
             DBError::FormDoesNotFollowTemplate { template } => Error::FormDoesNotFollowTemplate { template },
             _ => Error::Internal
         }
     }
 }
 
-#[derive(Debug, Display, Error)]
+#[derive(Debug, Display)]
 pub enum Error {
     Internal,
 
-    #[display(fmt = "{uuid} is not tied to any items")]
-    UuidDoesNotExist { uuid: String },
+    #[display(fmt = "{item_type} Does Not Exist")]
+    DoesNotExist{ item_type: ItemType },
 
-    #[display(fmt = "{template} does not exist")]
-    TemplateDoesNotExist { template: String },
-
-    #[display(fmt = "{scouter} does not exist")]
-    ScouterDoesNotExist { scouter: String },
-
-    #[display(fmt = "{schedule} does not exist")]
-    ScheduleDoesNotExist { schedule: String },
+    #[display(fmt = "{item_type} Exists Already")]
+    ExistsAlready{ item_type: ItemType },
 
     #[display(fmt = "The name requested is a reserved word")]
     TemplateNameReserved { name: String },

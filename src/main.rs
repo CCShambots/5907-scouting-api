@@ -13,7 +13,7 @@ use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
 use uuid::Uuid;
 use crate::data::template::FormTemplate;
-use crate::logic::messages::{AddFormData, FormMessage, Internal, InternalMessage, RemoveFormData, ScheduleMessage, TemplateMessage};
+use crate::logic::messages::{Internal, InternalMessage};
 
 #[main]
 async fn main() -> std::io::Result<()> {
@@ -49,7 +49,7 @@ async fn run_server() -> std::io::Result<()> {
     HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin() // <--- this // ?
-            .allowed_methods(vec!["GET", "POST", "DELETE"])
+            .allowed_methods(vec!["GET", "POST", "DELETE", "PUT"])
             .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
             .allowed_header(http::header::CONTENT_TYPE)
             .max_age(3600);
@@ -57,19 +57,23 @@ async fn run_server() -> std::io::Result<()> {
         App::new()
             .app_data(data.clone())
             .wrap(cors)
-            .service(teams)
-            .service(submit_form)
+            .service(endpoints::status)
+
+            .service(endpoints::forms::get_form)
+            .service(endpoints::forms::get_forms)
+            .service(endpoints::forms::submit_form)
+            .service(endpoints::forms::edit_form)
+            .service(endpoints::forms::remove_form)
+
             .service(get_template)
             .service(templates)
             .service(set_schedule)
             .service(get_schedule)
             .service(get_shifts)
-            .service(delete_form)
             .service(delete_schedule)
             .service(delete_template)
             .service(modify_template)
             .service(add_template)
-            .service(status)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
@@ -115,44 +119,6 @@ async fn add_template(
     Ok(HttpResponse::Ok().finish())
 }
 
-#[actix_web::post("/template/{template}/submit")]
-async fn submit_form(
-    data: Data<AppState>,
-    path: Path<String>,
-    form: Json<Vec<Form>>,
-) -> Result<HttpResponse, Error> {
-    let msg = Internal::Form(FormMessage::Add(
-        AddFormData {
-            template: path.into_inner(),
-            forms: form.0,
-        }
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-#[actix_web::delete("/template/{template}/delete/{id}")]
-async fn delete_form(
-    data: Data<AppState>,
-    path: Path<(String, Uuid)>
-) -> Result<HttpResponse, Error> {
-    let inner = path.into_inner();
-    let msg = Internal::Form(FormMessage::Remove(
-        RemoveFormData {
-            template: inner.0,
-            id: inner.1
-        }
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-#[actix_web::get("/status")]
-async fn status() -> HttpResponse {
-    HttpResponse::Ok().finish()
-}
 
 #[actix_web::post("/schedules/{event}/submit")]
 async fn set_schedule(
@@ -180,17 +146,7 @@ async fn delete_schedule(
     Ok(HttpResponse::Ok().finish())
 }
 
-#[actix_web::get("/template/{template}/get")]
-async fn teams(
-    data: Data<AppState>,
-    path: Path<String>,
-    query: Query<Filter>,
-) -> Result<HttpResponse, Error> {
-    let path_data = path.into_inner();
-    let forms: Vec<Form> = data.get(path_data, query.0).await?;
 
-    Ok(HttpResponse::Ok().json(forms))
-}
 
 #[actix_web::get("/templates/{template}")]
 async fn get_template(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, Error> {
