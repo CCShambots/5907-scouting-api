@@ -1,6 +1,6 @@
-use crate::data::db_layer::CacheInput::{Event, Match, Scouter, Team};
+use crate::data::db_layer::CacheInput::{Event, Match, Team};
 use crate::data::template::{FormTemplate};
-use crate::data::{Form, Schedule, Shift};
+use crate::data::{Form, Schedule, Scouter, Shift};
 use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
 use actix_web::http::StatusCode;
@@ -20,7 +20,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use uuid::{Error as UuidError, Uuid};
+use crate::add_template;
 use crate::data::template::Error as TemplateError;
+use crate::logic::messages::AddType;
 
 
 impl DBLayer {
@@ -37,6 +39,55 @@ impl DBLayer {
                 "templates".into()
             ])
         }
+    }
+
+    pub async fn add(&self, d_type: &AddType, id: Uuid) -> Result<(), Error> {
+        match d_type {
+            AddType::Form(form, template) => self.add_form(form, id, template).await,
+            AddType::Schedule(schedule) => self.add_schedule(schedule).await,
+            AddType::Shift(shift, event) => self.add_shift(shift, event).await,
+            AddType::Scouter(scouter) => todo!(),
+            _ => todo!()
+        }
+    }
+
+    async fn add_scouter(&self, scouter: &Scouter) -> Result<(), Error> {
+        let tree = self.db.open_tree("scouters")?;
+
+
+    }
+
+    async fn add_shift(&self, shift: &Shift, event: &str) -> Result<(), Error> {
+        let mut schedule = self.get_schedule(event).await?;
+        let tree = self.db.open_tree(&schedule.event)?;
+
+        schedule.shifts.push(shift.clone());
+
+        tree.insert(event, serde_cbor::to_vec(&schedule)?)?;
+
+        Ok(())
+    }
+
+    async fn add_schedule(&self, schedule: &Schedule) -> Result<(), Error> {
+        let tree = self.db.open_tree("schedules")?;
+
+        match tree.contains_key(&schedule.event)? {
+            true => Err(Error::ExistsAlready(ItemType::Schedule(schedule.event.clone()))),
+            false => {
+                tree.insert(&schedule.event, serde_cbor::to_vec(schedule)?)?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn add_form(&self, form: &Form, id: Uuid, template: &str) -> Result<(), Error> {
+        let temp = self.get_template(template).await?;
+        temp.validate_form(form)?;
+        let tree = self.db.open_tree(temp.name)?;
+
+        tree.insert(id, serde_cbor::to_vec(form)?)?;
+
+        Ok(())
     }
 
     pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, Error> {
@@ -56,7 +107,7 @@ impl DBLayer {
         Ok(
             uuids
                 .iter()
-                .map(|x| bincode::decode_from_slice(&tree.get(x).unwrap().unwrap(), self.byte_config).unwrap().0)
+                .map(|x| serde_cbor::de::from_slice(&tree.get(x).unwrap().unwrap()).unwrap())
                 .collect()
         )
     }
@@ -68,8 +119,7 @@ impl DBLayer {
             return Err(Error::DoesNotExist(ItemType::Schedule(event.into())));
         }
 
-        let (decoded, _): (Schedule, usize) =
-            bincode::decode_from_slice(&tree.get(event)?.unwrap(), self.byte_config)?;
+        let decoded: Schedule = serde_cbor::de::from_slice(&tree.get(event)?.unwrap())?;
 
         Ok(decoded)
     }
@@ -77,7 +127,7 @@ impl DBLayer {
     pub async fn set_schedule(&self, event: &str, schedule: &Schedule) -> Result<(), Error> {
         let tree = self.db.open_tree("schedules")?;
 
-        tree.insert(event, bincode::encode_to_vec(schedule, self.byte_config)?)?;
+        tree.insert(event, serde_cbor::to_vec(schedule)?)?;
 
         Ok(())
     }
@@ -221,7 +271,7 @@ impl DBLayer {
         }
 
         if let Some(scouter) = &filter.scouter {
-            out.push(lock.get(Scouter(scouter.clone()), template)?);
+            out.push(lock.get(CacheInput::Scouter(scouter.clone()), template)?);
             num_filters += 1;
         }
 
@@ -276,7 +326,7 @@ impl DBLayer {
 
         lock.add(Team(form.team), uuid, template)?;
         lock.add(Match(form.match_number), uuid, template)?;
-        lock.add(Scouter(form.scouter.clone()), uuid, template)?;
+        lock.add(CacheInput::Scouter(form.scouter.clone()), uuid, template)?;
         lock.add(Event(form.event_key.clone()), uuid, template)?;
 
         Ok(())
@@ -339,6 +389,12 @@ impl Cache {
     }
 }
 
+impl From<serde_cbor::Error> for Error {
+    fn from(value: serde_cbor::Error) -> Self {
+        Error::Encode
+    }
+}
+
 impl From<TryFromSliceError> for Error {
     fn from(_: TryFromSliceError) -> Self {
         Error::Decode
@@ -385,6 +441,7 @@ impl From<crate::data::template::Error> for Error {
 pub enum Error {
     CorruptDB,
     DoesNotExist(ItemType),
+    ExistsAlready(ItemType),
     FormDoesNotFollowTemplate{ template: String },
     Decode,
     Encode

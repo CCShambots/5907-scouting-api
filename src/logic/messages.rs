@@ -25,9 +25,9 @@ pub enum Internal {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum AddType {
-    Form(Form),
+    Form(Form, String),
     Schedule(Schedule),
-    Shift(Shift),
+    Shift(Shift, String),
     Scouter(Scouter)
 }
 

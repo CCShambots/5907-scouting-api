@@ -26,8 +26,7 @@ pub struct Form {
     pub scouter: String,
     pub team: i64,
     pub match_number: i64,
-    pub event_key: String,
-    id: Uuid
+    pub event_key: String
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -42,8 +41,7 @@ pub enum FieldData {
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Schedule {
     pub event: String,
-    pub shifts: Vec<Shift>,
-    id: Uuid
+    pub shifts: Vec<Shift>
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
@@ -51,14 +49,12 @@ pub struct Shift {
     pub scouter: String,
     pub station: u8,
     pub match_start: u32,
-    pub match_end: u32,
-    id: Uuid
+    pub match_end: u32
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Scouter {
     name: String,
     team: i32,
-    accuracy: f32,
-    id: Uuid
+    accuracy: f32
 }
