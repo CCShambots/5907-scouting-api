@@ -1,6 +1,7 @@
 mod data;
 mod settings;
 mod logic;
+mod endpoints;
 
 use crate::data::db_layer::{Filter};
 use crate::data::{Form, Schedule};

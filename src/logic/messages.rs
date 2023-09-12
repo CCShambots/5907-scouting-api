@@ -19,8 +19,9 @@ pub struct InternalMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Internal {
-    Add(AddType, Uuid),
-    Remove(RemoveType, Uuid)
+    Add(AddType),
+    Remove(RemoveType),
+    Edit(EditType)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -28,15 +29,26 @@ pub enum AddType {
     Form(Form, String),
     Schedule(Schedule),
     Shift(Shift, String),
-    Scouter(Scouter)
+    Scouter(Scouter),
+    Bytes(Vec<u8>, String)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum EditType {
+    Form(Form, String),
+    Schedule(Schedule),
+    Scouter(Scouter),
+    Shift(String, u64, Shift),
+    Bytes(Vec<u8>, String)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum RemoveType {
-    Form,
-    Schedule,
-    Shift,
-    Scouter
+    Form(Uuid),
+    Schedule(String),
+    Shift(String, u64),
+    Scouter(String),
+    Bytes(String)
 }
 
 #[derive(Serialize, Deserialize, Debug)]

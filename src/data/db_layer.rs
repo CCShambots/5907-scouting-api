@@ -8,11 +8,11 @@ use actix_web::{HttpResponse, ResponseError};
 use bincode::config::{Configuration};
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::{Display, Error};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sled::{Batch, Db, Transactional};
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::fs::read_to_string;
 use std::io::Read;
 use std::ops::BitAnd;
@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use uuid::{Error as UuidError, Uuid};
 use crate::add_template;
+use crate::data::db_layer::Error::ExistsAlready;
 use crate::data::template::Error as TemplateError;
 use crate::logic::messages::AddType;
 
@@ -36,58 +37,98 @@ impl DBLayer {
                 "__sled__default".into(),
                 "schedules".into(),
                 "scouters".into(),
-                "templates".into()
+                "templates".into(),
+                "raw_storage".into()
             ])
         }
     }
 
-    pub async fn add(&self, d_type: &AddType, id: Uuid) -> Result<(), Error> {
+    pub async fn add(&self, d_type: &AddType) -> Result<String, Error> {
         match d_type {
-            AddType::Form(form, template) => self.add_form(form, id, template).await,
+            AddType::Form(form, template) => self.add_form(form, template).await,
             AddType::Schedule(schedule) => self.add_schedule(schedule).await,
             AddType::Shift(shift, event) => self.add_shift(shift, event).await,
-            AddType::Scouter(scouter) => todo!(),
-            _ => todo!()
+            AddType::Scouter(scouter) => self.add_scouter(scouter).await,
+            AddType::Bytes(bytes, key) => self.add_bytes(bytes, key).await
         }
     }
 
-    async fn add_scouter(&self, scouter: &Scouter) -> Result<(), Error> {
-        let tree = self.db.open_tree("scouters")?;
-
-
+    fn ser(s: &impl Serialize) -> Result<Vec<u8>, Error> {
+        serde_cbor::to_vec(s).map_err(|err| { err.into() })
     }
 
-    async fn add_shift(&self, shift: &Shift, event: &str) -> Result<(), Error> {
+    fn jser(s: &impl Serialize) -> Result<String, Error> {
+        serde_json::to_string(s).map_err(|err| { err.into() })
+    }
+
+    fn scouter_key(sc: &Scouter) -> String {
+        format!("{}{}", sc.name, sc.team)
+    }
+
+    async fn add_bytes(&self, bytes: &Vec<u8>, key: &str) -> Result<String, Error> {
+        let tree = self.db.open_tree("raw_storage")?;
+
+        match tree.contains_key(key)? {
+            true => Err(ExistsAlready(ItemType::Bytes(key.into()))),
+            false => {
+                tree.insert(key, &bytes[..])?;
+                Ok(Self::jser(&key.to_string())?)
+            }
+        }
+    }
+
+    async fn add_scouter(&self, scouter: &Scouter) -> Result<String, Error> {
+        let tree = self.db.open_tree("scouters")?;
+        let scouter_key = Self::scouter_key(scouter);
+
+        match tree.contains_key(&scouter_key)? {
+            true => Err(Error::ExistsAlready(ItemType::Scouter(scouter_key))),
+            false => {
+                tree.insert(&scouter_key, Self::ser(scouter)?)?;
+                Ok(Self::jser(&scouter_key)?)
+            }
+        }
+    }
+
+    async fn add_shift(&self, shift: &Shift, event: &str) -> Result<String, Error> {
         let mut schedule = self.get_schedule(event).await?;
         let tree = self.db.open_tree(&schedule.event)?;
 
-        schedule.shifts.push(shift.clone());
-
-        tree.insert(event, serde_cbor::to_vec(&schedule)?)?;
-
-        Ok(())
+        match tree.contains_key(event)? {
+            true => Err(Error::DoesNotExist(ItemType::Schedule(event.into()))),
+            false => {
+                schedule.shifts.push(shift.clone());
+                tree.insert(event, Self::ser(&schedule)?)?;
+                Ok(Self::jser(&(event.to_string(), schedule.shifts.len() - 1))?)
+            }
+        }
     }
 
-    async fn add_schedule(&self, schedule: &Schedule) -> Result<(), Error> {
+    async fn add_schedule(&self, schedule: &Schedule) -> Result<String, Error> {
         let tree = self.db.open_tree("schedules")?;
 
         match tree.contains_key(&schedule.event)? {
             true => Err(Error::ExistsAlready(ItemType::Schedule(schedule.event.clone()))),
             false => {
-                tree.insert(&schedule.event, serde_cbor::to_vec(schedule)?)?;
-                Ok(())
+                tree.insert(&schedule.event, Self::ser(schedule)?)?;
+                Ok(Self::jser(&schedule.event)?)
             }
         }
     }
 
-    async fn add_form(&self, form: &Form, id: Uuid, template: &str) -> Result<(), Error> {
+    async fn add_form(&self, form: &Form, template: &str) -> Result<String, Error> {
         let temp = self.get_template(template).await?;
         temp.validate_form(form)?;
         let tree = self.db.open_tree(temp.name)?;
+        let id = Uuid::new_v4();
 
-        tree.insert(id, serde_cbor::to_vec(form)?)?;
-
-        Ok(())
+        match tree.contains_key(id)? {
+            true => Err(Error::ExistsAlready(ItemType::Form(template.into(), id))),
+            false => {
+                tree.insert(id, Self::ser(form)?)?;
+                Ok(Self::jser(&id)?)
+            }
+        }
     }
 
     pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<Form>, Error> {
@@ -124,26 +165,6 @@ impl DBLayer {
         Ok(decoded)
     }
 
-    pub async fn set_schedule(&self, event: &str, schedule: &Schedule) -> Result<(), Error> {
-        let tree = self.db.open_tree("schedules")?;
-
-        tree.insert(event, serde_cbor::to_vec(schedule)?)?;
-
-        Ok(())
-    }
-
-    pub async fn remove_schedule(&self, event: &str) -> Result<(), Error> {
-        let tree = self.db.open_tree("schedules")?;
-
-        match tree.contains_key(event)? {
-            true => {
-                tree.remove(event)?;
-                Ok(())
-            },
-            false => Err(Error::DoesNotExist(ItemType::Schedule(event.into())))
-        }
-    }
-
     pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {
         let schedule = self.get_schedule(event).await?;
 
@@ -153,74 +174,6 @@ impl DBLayer {
             .filter(|shift| shift.scouter == scouter)
             .collect()
         )
-    }
-
-    pub async fn submit_forms(&self, template: &str, forms: &[Form]) -> Result<(), Error> {
-        let mut op = Batch::default();
-        let template_tree = self.db.open_tree(template)?;
-        let temp = self.get_template(template).await
-            .map_err(|_| Error::DoesNotExist(ItemType::Template(template.into())))?;
-
-
-        for form in forms.to_vec().iter_mut() {
-            temp.validate_form(form)?;
-
-            let uuid = Uuid::try_parse(form.id.get_or_insert(Uuid::new_v4().to_string()))?;
-
-            let encoded_form = bincode::encode_to_vec(&*form, self.byte_config)?;
-
-            op.insert(uuid.as_bytes(), encoded_form);
-
-            self.update_cache(form, uuid, template).await?;
-        }
-
-        template_tree.apply_batch(op)?;
-
-        Ok(())
-    }
-
-    pub async fn remove_form(&self, template: &str, id: Uuid) -> Result<(), Error> {
-        let tree = self.db.open_tree(template)?;
-
-        match tree.contains_key(id)? {
-            true => {
-                tree.remove(id)?;
-                Ok(())
-            },
-            false => Err(Error::DoesNotExist(ItemType::Form(id.to_string())))
-        }
-    }
-
-    pub async fn add_template(&self, template: &FormTemplate) -> Result<(), Error> {
-        let tree = self.db.open_tree("templates")?;
-
-        match !tree.contains_key(&template.name)? {
-            true => {
-                self.cache.write().await.add_template(&template.name)?;
-                self.set_template(template).await
-            },
-            false => Ok(())
-        }
-    }
-
-    pub async fn set_template(&self, template: &FormTemplate) -> Result<(), Error> {
-        let tree = self.db.open_tree("templates")?;
-
-        tree.insert(&template.name, bincode::encode_to_vec(template, self.byte_config)?)?;
-
-        Ok(())
-    }
-
-    pub async fn remove_template(&self, name: &str) -> Result<(), Error> {
-        let tree = self.db.open_tree("templates")?;
-
-        match tree.contains_key(name)? {
-            true => {
-                tree.remove(name)?;
-                self.cache.write().await.remove_template(name)
-            },
-            false => Err(Error::DoesNotExist(ItemType::Template(name.into())))
-        }
     }
 
     pub async fn get_templates(&self) -> Vec<String> {
@@ -305,8 +258,8 @@ impl DBLayer {
                 for p in tree.iter() {
                     let pair = p?;
                     let uuid: Uuid = Uuid::from_slice(&pair.0)?;
-                    let (form, _): (Form, usize) =
-                        bincode::decode_from_slice(&pair.1, self.byte_config)?;
+                    let form: Form = serde_cbor::from_slice(&pair.1)?;
+
 
                     self.update_cache(&form, uuid, &name).await?;
                 }
@@ -447,11 +400,27 @@ pub enum Error {
     Encode
 }
 
-#[derive(Debug, Display)]
+impl Display for ItemType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ItemType::Template(name) => write!(f, "Template: {}", name),
+            ItemType::Schedule(event) => write!(f, "Schedule: {}", event),
+            ItemType::Shift(event, idx) => write!(f, "Shift: {}, Index: {}", event, idx),
+            ItemType::Form(template, id) => write!(f, "Form: {}, ID: {}", template, id),
+            ItemType::Bytes(key) => write!(f, "Bytes: {}", key),
+            ItemType::Scouter(scouter) => write!(f, "Scouter: {}", scouter)
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ItemType {
     Template(String),
     Schedule(String),
-    Form(String)
+    Shift(String, u64),
+    Scouter(String),
+    Form(String, Uuid),
+    Bytes(String)
 }
 
 pub struct DBLayer {

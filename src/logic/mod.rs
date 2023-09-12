@@ -8,6 +8,7 @@ use actix_web::{HttpResponse, ResponseError};
 use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
 use derive_more::{Display, Error};
+use serde::Serialize;
 use crate::data::db_layer::{DBLayer, Filter, Error as DBError, ItemType};
 use crate::data::template::FormTemplate;
 use crate::data::{Form, Schedule, Shift};
@@ -33,25 +34,17 @@ impl AppState {
         }
     }
 
-    pub async fn mutate(&self, message: InternalMessage) -> Result<(), Error> {
-        match &message.msg {
-            Internal::Form(msg) =>
-                self.handle_form_message(msg).await?,
-
-            Internal::Template(msg) =>
-                self.handle_template_message(msg).await?,
-
-            Internal::Scouter(msg) =>
-                self.handle_scouter_message(msg).await?,
-
-            Internal::Schedule(msg) =>
-                self.handle_schedule_message(msg).await?
-        }
+    pub async fn mutate(&self, message: InternalMessage) -> Result<String, Error> {
+        let key = match &message.msg {
+            Internal::Add(msg) => self.db_layer.add(msg),
+            Internal::Remove(msg) => todo!(),
+            Internal::Edit(msg) => todo!()
+        }.await?;
 
         self.log_mutation(&message).await?;
         println!("{:?}", &message);
 
-        Ok(())
+        Ok(key)
     }
 
     async fn log_mutation(&self, message: &InternalMessage) -> Result<(), Error> {
@@ -70,39 +63,6 @@ impl AppState {
         transaction_log.write_all("]".as_bytes()).await?;
 
         Ok(())
-    }
-
-    async fn handle_form_message(&self, message: &FormMessage) -> Result<(), Error> {
-        //erm what the freak
-
-        match message {
-            FormMessage::Add(data) => self.submit_forms(data).await,
-            FormMessage::Remove(data) => self.db_layer.remove_form(&data.template, data.id).await.map_err(|err| err.into())
-        }
-    }
-
-    async fn handle_template_message(&self, message: &TemplateMessage) -> Result<(), Error> {
-        match message {
-            TemplateMessage::Add(data) => self.db_layer.add_template(data).await,
-            TemplateMessage::Modify(data) => self.db_layer.set_template(data).await,
-            TemplateMessage::Remove(data) => self.db_layer.remove_template(data).await
-        }.map_err(|err| err.into())
-    }
-
-    async fn handle_scouter_message(&self, message: &ScouterMessage) -> Result<(), Error> {
-        match message {
-            ScouterMessage::Add(_) => { todo!() }
-            ScouterMessage::Modify(_) => { todo!() }
-            ScouterMessage::Remove(_) => { todo!() }
-        }
-    }
-
-    async fn handle_schedule_message(&self, message: &ScheduleMessage) -> Result<(), Error> {
-        match message {
-            ScheduleMessage::Add(data) | ScheduleMessage::Modify(data) =>
-                self.db_layer.set_schedule(&data.event, data).await,
-            ScheduleMessage::Remove(data) => self.db_layer.remove_schedule(data).await
-        }.map_err(|err| err.into())
     }
 
     pub async fn get_templates(&self) -> Vec<String> {
