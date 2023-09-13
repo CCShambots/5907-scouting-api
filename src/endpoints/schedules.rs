@@ -18,7 +18,7 @@ async fn submit_schedule(
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::delete("/schedules/{event}/remove")]
+#[actix_web::delete("/schedules/remove/{event}")]
 async fn remove_schedule(
     data: Data<AppState>,
     path: Path<String>
@@ -29,7 +29,7 @@ async fn remove_schedule(
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::put("/schedules/edit")]
+#[actix_web::put("/schedules/get/edit")]
 async fn edit_schedule(
     data: Data<AppState>,
     schedule: Json<Schedule>
@@ -47,7 +47,7 @@ async fn get_schedules(
     todo!()
 }
 
-#[actix_web::get("/schedules/{event}")]
+#[actix_web::get("/schedules/get/event/{event}")]
 async fn get_schedule(
     data: Data<AppState>,
     path: Path<String>

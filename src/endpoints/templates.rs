@@ -16,7 +16,7 @@ async fn submit_template(
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::delete("/templates/{name}/remove")]
+#[actix_web::delete("/templates/remove/{name}")]
 async fn remove_template(
     data: Data<AppState>,
     path: Path<String>
@@ -27,7 +27,7 @@ async fn remove_template(
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::get("/templates")]
+#[actix_web::get("/templates/get")]
 async fn get_templates(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
@@ -36,7 +36,7 @@ async fn get_templates(
     Ok(HttpResponse::Ok().json(resp))
 }
 
-#[actix_web::get("/templates/{name}")]
+#[actix_web::get("/templates/get/name/{name}")]
 async fn get_template(
     data: Data<AppState>,
     path: Path<String>
