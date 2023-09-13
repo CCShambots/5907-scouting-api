@@ -49,5 +49,7 @@ async fn get_schedule(
     data: Data<AppState>,
     path: Path<String>
 ) -> Result<HttpResponse, Error> {
-    todo!()
+    let resp = data.get_schedule(&path.into_inner()).await?;
+
+    Ok(HttpResponse::Ok().json(resp))
 }
