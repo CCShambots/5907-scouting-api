@@ -37,7 +37,7 @@ async fn edit_schedule(
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::get("/schedules")]
+#[actix_web::get("/schedules/get")]
 async fn get_schedules(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
