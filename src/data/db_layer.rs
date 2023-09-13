@@ -89,7 +89,7 @@ impl DBLayer {
 
                 let old: FormTemplate = serde_cbor::from_slice(&tree.insert(&template.name, Self::ser(&template)?)?.unwrap())?;
 
-                Ok(Self::jser(&(old, old.name.clone()))?)
+                Ok(Self::jser(&(old, &template.name))?)
             }
 
         }
