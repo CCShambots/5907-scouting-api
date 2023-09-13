@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::data::{Form, Schedule, Scouter, Shift};
+use crate::data::template::FormTemplate;
 
 impl InternalMessage {
     pub fn new(msg: Internal) -> Self {
@@ -30,7 +31,8 @@ pub enum AddType {
     Schedule(Schedule),
     Shift(Shift, String),
     Scouter(Scouter),
-    Bytes(Vec<u8>, String)
+    Bytes(Vec<u8>, String),
+    Template(FormTemplate)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -48,7 +50,8 @@ pub enum RemoveType {
     Schedule(String),
     Shift(String, u64),
     Scouter(String),
-    Bytes(String)
+    Bytes(String),
+    Template(String)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
