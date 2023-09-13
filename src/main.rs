@@ -65,109 +65,30 @@ async fn run_server() -> std::io::Result<()> {
             .service(endpoints::forms::edit_form)
             .service(endpoints::forms::remove_form)
 
-            .service(get_template)
-            .service(templates)
-            .service(set_schedule)
-            .service(get_schedule)
-            .service(get_shifts)
-            .service(delete_schedule)
-            .service(delete_template)
-            .service(modify_template)
-            .service(add_template)
+            .service(endpoints::templates::get_template)
+            .service(endpoints::templates::get_templates)
+            .service(endpoints::templates::submit_template)
+            .service(endpoints::templates::remove_template)
+
+            .service(endpoints::schedules::get_schedule)
+            .service(endpoints::schedules::get_schedules)
+            .service(endpoints::schedules::submit_schedule)
+            .service(endpoints::schedules::edit_schedule)
+            .service(endpoints::schedules::remove_schedule)
+
+            .service(endpoints::scouters::get_scouter)
+            .service(endpoints::scouters::get_scouters)
+            .service(endpoints::scouters::submit_scouter)
+            .service(endpoints::scouters::edit_scouter)
+            .service(endpoints::scouters::remove_scouter)
+
+            .service(endpoints::bytes::get_bytes)
+            .service(endpoints::bytes::get_bytes_by_key)
+            .service(endpoints::bytes::submit_bytes)
+            .service(endpoints::bytes::edit_bytes)
+            .service(endpoints::bytes::remove_bytes)
     })
     .bind(("0.0.0.0", 8080))?
     .run()
     .await
-}
-
-#[actix_web::delete("/template/delete/{template}")]
-async fn delete_template(
-    data: Data<AppState>,
-    path: Path<String>
-) -> Result<HttpResponse, Error> {
-    let msg = Internal::Template(TemplateMessage::Remove(
-        path.into_inner()
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-#[actix_web::post("/template/modify")]
-async fn modify_template(
-    data: Data<AppState>,
-    template: Json<FormTemplate>
-) -> Result<HttpResponse, Error> {
-    let msg = Internal::Template(TemplateMessage::Modify(
-        template.into_inner()
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-#[actix_web::post("/template/add")]
-async fn add_template(
-    data: Data<AppState>,
-    template: Json<FormTemplate>
-) -> Result<HttpResponse, Error> {
-    let msg = Internal::Template(TemplateMessage::Add(
-        template.into_inner()
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-
-#[actix_web::post("/schedules/{event}/submit")]
-async fn set_schedule(
-    data: Data<AppState>,
-    schedule: Json<Schedule>,
-) -> Result<HttpResponse, Error> {
-    let msg = Internal::Schedule(ScheduleMessage::Modify(
-        schedule.into_inner()
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-#[actix_web::delete("/schedules/{event}/delete")]
-async fn delete_schedule(
-    data: Data<AppState>,
-    path: Path<String>
-) -> Result<HttpResponse, Error> {
-    let msg = Internal::Schedule(ScheduleMessage::Remove(
-        path.into_inner()
-    ));
-
-    data.mutate(InternalMessage::new(msg)).await?;
-    Ok(HttpResponse::Ok().finish())
-}
-
-
-
-#[actix_web::get("/templates/{template}")]
-async fn get_template(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, Error> {
-    Ok(HttpResponse::Ok().json(data.get_template(&path.into_inner()).await?))
-}
-
-#[actix_web::get("/templates")]
-async fn templates(data: Data<AppState>) -> Result<HttpResponse, Error> {
-    Ok(HttpResponse::Ok().json(data.get_templates().await))
-}
-
-#[actix_web::get("/schedules/{event}/{scouter}")]
-async fn get_shifts(
-    data: Data<AppState>,
-    path: Path<(String, String)>,
-) -> Result<HttpResponse, Error> {
-    let path_data = path.into_inner();
-    Ok(HttpResponse::Ok().json(data.get_shifts(&path_data.0, &path_data.1).await?))
-}
-
-#[actix_web::get("/schedules/{event}")]
-async fn get_schedule(data: Data<AppState>, path: Path<String>) -> Result<HttpResponse, Error> {
-    Ok(HttpResponse::Ok().json(data.get_schedule(&path.into_inner()).await?))
 }
