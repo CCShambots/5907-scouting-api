@@ -6,7 +6,7 @@ use crate::data::Form;
 use crate::logic::{AppState, Error};
 use crate::logic::messages::{AddType, EditType, Internal, InternalMessage, RemoveType};
 
-#[actix_web::post("/forms/submit/{template}")]
+#[actix_web::post("/forms/submit/template/{template}")]
 async fn submit_form(
     data: Data<AppState>,
     path: Path<String>,
