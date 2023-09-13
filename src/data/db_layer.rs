@@ -324,7 +324,7 @@ impl DBLayer {
 
     pub async fn get_template(&self, template: &str) -> Result<FormTemplate, Error> {
         match self.db.open_tree("templates")?.get(template)? {
-            Some(temp) => Ok(bincode::decode_from_slice(&temp, self.byte_config)?.0),
+            Some(temp) => Ok(serde_cbor::from_slice(&temp)?),
             None => Err(Error::DoesNotExist(ItemType::Template(template.into()))),
         }
     }
