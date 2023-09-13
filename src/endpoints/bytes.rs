@@ -1,51 +1,59 @@
 use actix_web::HttpResponse;
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{Bytes, Data, Json, Path};
 use crate::data::{Schedule};
 use crate::logic::{AppState, Error};
 use crate::logic::messages::{AddType, EditType, Internal, InternalMessage, RemoveType};
 
-#[actix_web::post("/schedules/submit")]
-async fn submit_schedule(
+#[actix_web::post("/bytes/submit/key/{key}")]
+async fn submit_bytes(
     data: Data<AppState>,
-    schedule: Json<Schedule>
+    bytes: Bytes,
+    path: Path<String>
 ) -> Result<HttpResponse, Error> {
-    let msg = Internal::Add(AddType::Schedule(schedule.0));
+    let msg = Internal::Add(AddType::Bytes(
+        bytes.to_vec(),
+        path.into_inner()
+    ));
     let resp = data.mutate(InternalMessage::new(msg)).await?;
 
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::delete("/schedules/remove/event/{event}")]
-async fn remove_schedule(
+#[actix_web::delete("/bytes/remove/key/{key}")]
+async fn remove_bytes(
     data: Data<AppState>,
     path: Path<String>
 ) -> Result<HttpResponse, Error> {
-    let msg = Internal::Remove(RemoveType::Schedule(path.into_inner()));
+    let msg = Internal::Remove(RemoveType::Bytes(path.into_inner()));
     let resp = data.mutate(InternalMessage::new(msg)).await?;
 
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::put("/schedules/get/edit")]
-async fn edit_schedule(
+#[actix_web::put("/bytes/edit/key/{key}")]
+async fn edit_bytes(
     data: Data<AppState>,
-    schedule: Json<Schedule>
+    bytes: Bytes,
+    path: Path<String>
 ) -> Result<HttpResponse, Error> {
-    let msg = Internal::Edit(EditType::Schedule(schedule.0));
+    let msg = Internal::Edit(EditType::Bytes(
+        bytes.to_vec(),
+        path.into_inner()
+    ));
     let resp = data.mutate(InternalMessage::new(msg)).await?;
 
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::get("/schedules")]
-async fn get_schedules(
+#[actix_web::get("/bytes/get")]
+async fn get_bytes(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
     todo!()
 }
 
-#[actix_web::get("/schedules/get/event/{event}")]
-async fn get_schedule(
+#[actix_web::get("/bytes/get/key/{key}")]
+async fn get_bytes_by_key(
     data: Data<AppState>,
     path: Path<String>
 ) -> Result<HttpResponse, Error> {

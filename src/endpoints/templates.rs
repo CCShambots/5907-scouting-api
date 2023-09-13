@@ -16,7 +16,7 @@ async fn submit_template(
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::delete("/templates/remove/{name}")]
+#[actix_web::delete("/templates/remove/name/{name}")]
 async fn remove_template(
     data: Data<AppState>,
     path: Path<String>

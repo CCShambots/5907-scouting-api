@@ -1,53 +1,53 @@
 use actix_web::HttpResponse;
 use actix_web::web::{Data, Json, Path};
-use crate::data::{Schedule};
+use crate::data::{Schedule, Scouter};
 use crate::logic::{AppState, Error};
 use crate::logic::messages::{AddType, EditType, Internal, InternalMessage, RemoveType};
 
-#[actix_web::post("/schedules/submit")]
-async fn submit_schedule(
+#[actix_web::post("/scouters/submit")]
+async fn submit_scouter(
     data: Data<AppState>,
-    schedule: Json<Schedule>
+    scouter: Json<Scouter>
 ) -> Result<HttpResponse, Error> {
-    let msg = Internal::Add(AddType::Schedule(schedule.0));
+    let msg = Internal::Add(AddType::Scouter(scouter.0));
     let resp = data.mutate(InternalMessage::new(msg)).await?;
 
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::delete("/schedules/remove/event/{event}")]
-async fn remove_schedule(
+#[actix_web::delete("/scouters/remove/scouterkey/{key}")]
+async fn remove_scouter(
     data: Data<AppState>,
     path: Path<String>
 ) -> Result<HttpResponse, Error> {
-    let msg = Internal::Remove(RemoveType::Schedule(path.into_inner()));
+    let msg = Internal::Remove(RemoveType::Scouter(path.into_inner()));
     let resp = data.mutate(InternalMessage::new(msg)).await?;
 
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::put("/schedules/get/edit")]
-async fn edit_schedule(
+#[actix_web::put("/scouters/edit")]
+async fn edit_scouter(
     data: Data<AppState>,
-    schedule: Json<Schedule>
+    scouter: Json<Scouter>
 ) -> Result<HttpResponse, Error> {
-    let msg = Internal::Edit(EditType::Schedule(schedule.0));
+    let msg = Internal::Edit(EditType::Scouter(scouter.0));
     let resp = data.mutate(InternalMessage::new(msg)).await?;
 
     Ok(HttpResponse::Ok().body(resp))
 }
 
-#[actix_web::get("/schedules")]
-async fn get_schedules(
+#[actix_web::get("/scouters/get")]
+async fn get_scouters(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
     todo!()
 }
 
-#[actix_web::get("/schedules/get/event/{event}")]
-async fn get_schedule(
+#[actix_web::get("/scouters/get/scouterkey/{key}")]
+async fn get_scouter(
     data: Data<AppState>,
-    path: Path<String>
+    key: Path<String>
 ) -> Result<HttpResponse, Error> {
     todo!()
 }

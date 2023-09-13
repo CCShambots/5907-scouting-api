@@ -1,6 +1,8 @@
 pub mod forms;
 pub mod templates;
 pub mod schedules;
+pub mod scouters;
+mod bytes;
 
 use actix_web::HttpResponse;
 
