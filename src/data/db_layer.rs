@@ -21,7 +21,6 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use uuid::{Error as UuidError, Uuid};
-use crate::add_template;
 use crate::data::db_layer::Error::ExistsAlready;
 use crate::data::template::Error as TemplateError;
 use crate::logic::messages::{AddType, EditType, RemoveType};
