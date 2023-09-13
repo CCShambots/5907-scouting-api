@@ -21,7 +21,7 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use uuid::{Error as UuidError, Uuid};
-use crate::data::db_layer::Error::ExistsAlready;
+use crate::data::db_layer::Error::{ExistsAlready, TemplateHasForms};
 use crate::data::template::Error as TemplateError;
 use crate::logic::messages::{AddType, EditType, RemoveType};
 
@@ -44,6 +44,8 @@ impl DBLayer {
     }
 
     pub async fn add(&self, d_type: &AddType) -> Result<String, Error> {
+        println!("add");
+
         match d_type {
             AddType::Form(form, template) => self.add_form(form, template).await,
             AddType::Schedule(schedule) => self.add_schedule(schedule).await,
@@ -59,7 +61,8 @@ impl DBLayer {
             EditType::Form(form, id, template) => self.edit_form(form, *id, template).await,
             EditType::Schedule(schedule) => self.edit_schedule(schedule).await,
             EditType::Scouter(scouter) => self.edit_scouter(scouter).await,
-            EditType::Bytes(bytes, key) => self.edit_bytes(bytes, key).await
+            EditType::Bytes(bytes, key) => self.edit_bytes(bytes, key).await,
+            EditType::Template(template) => self.edit_template(template).await
         }
     }
 
@@ -74,13 +77,31 @@ impl DBLayer {
         }
     }
 
+    async fn edit_template(&self, template: &FormTemplate) -> Result<String, Error> {
+        let tree = self.db.open_tree("templates")?;
+
+        match tree.contains_key(&template.name)? {
+            false => Err(Error::DoesNotExist(ItemType::Template(template.name.clone()))),
+            true => {
+                if self.db.open_tree(&template.name)?.len() > 0 {
+                    return Err(TemplateHasForms { template: template.name.clone() })
+                }
+
+                let old: FormTemplate = serde_cbor::from_slice(&tree.insert(&template.name, Self::ser(&template)?)?.unwrap())?;
+
+                Ok(Self::jser(&(old, old.name.clone()))?)
+            }
+
+        }
+    }
+
     async fn edit_bytes(&self, bytes: &Vec<u8>, key: &str) -> Result<String, Error> {
         let tree = self.db.open_tree("raw_storage")?;
 
         match tree.contains_key(key)? {
             false => Err(Error::DoesNotExist(ItemType::Bytes(key.into()))),
             true => {
-                &tree.insert(key, &bytes[..])?;
+                tree.insert(key, &bytes[..])?;
 
                 Ok(Self::jser(&((), key))?)
             }
@@ -223,11 +244,15 @@ impl DBLayer {
         let tree = self.db.open_tree(temp.name)?;
         let id = Uuid::new_v4();
 
+        println!("got through setup");
+
         match tree.contains_key(id)? {
             true => Err(Error::ExistsAlready(ItemType::Form(template.into(), id))),
             false => {
                 tree.insert(id, Self::ser(form)?)?;
+                println!("inserted");
                 self.update_cache(form, id, template).await?;
+                println!("cache updated");
                 Ok(Self::jser(&id)?)
             }
         }
@@ -402,6 +427,7 @@ impl DBLayer {
     }
 
     fn jser(s: &impl Serialize) -> Result<String, Error> {
+        println!("ser");
         serde_json::to_string(s).map_err(|err| { err.into() })
     }
 
@@ -520,6 +546,7 @@ pub enum Error {
     DoesNotExist(ItemType),
     ExistsAlready(ItemType),
     FormDoesNotFollowTemplate{ template: String },
+    TemplateHasForms{ template: String },
     Decode,
     Encode
 }

@@ -36,10 +36,10 @@ impl AppState {
 
     pub async fn mutate(&self, message: InternalMessage) -> Result<String, Error> {
         let key = match &message.msg {
-            Internal::Add(msg) => self.db_layer.add(msg),
-            Internal::Remove(msg) => todo!(),
-            Internal::Edit(msg) => todo!()
-        }.await?;
+            Internal::Add(msg) => self.db_layer.add(msg).await,
+            Internal::Remove(msg) => self.db_layer.remove(msg).await,
+            Internal::Edit(msg) => self.db_layer.edit(msg).await
+        }?;
 
         self.log_mutation(&message).await?;
         println!("{:?}", &message);
@@ -132,6 +132,7 @@ impl From<DBError> for Error {
             DBError::DoesNotExist(err) => Self::DoesNotExist { item_type: err },
             DBError::ExistsAlready(err) => Self::ExistsAlready { item_type: err },
             DBError::FormDoesNotFollowTemplate { template } => Error::FormDoesNotFollowTemplate { template },
+            DBError::TemplateHasForms { template } => Error::TemplateHasForms { template },
             _ => Error::Internal
         }
     }
@@ -147,9 +148,12 @@ pub enum Error {
     #[display(fmt = "{item_type} Exists Already")]
     ExistsAlready{ item_type: ItemType },
 
-    #[display(fmt = "The name requested is a reserved word")]
+    #[display(fmt = "{name} is a reserved word")]
     TemplateNameReserved { name: String },
 
-    #[display(fmt = "The form submitted does not follow the template requested")]
-    FormDoesNotFollowTemplate { template: String }
+    #[display(fmt = "The form submitted does not follow the template: {template}")]
+    FormDoesNotFollowTemplate { template: String },
+
+    #[display(fmt = "The template {template} is immutable because it has forms saved")]
+    TemplateHasForms { template: String }
 }

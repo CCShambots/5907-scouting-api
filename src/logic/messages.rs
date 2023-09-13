@@ -40,7 +40,8 @@ pub enum EditType {
     Form(Form, Uuid, String),
     Schedule(Schedule),
     Scouter(Scouter),
-    Bytes(Vec<u8>, String)
+    Bytes(Vec<u8>, String),
+    Template(FormTemplate)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
