@@ -68,6 +68,7 @@ async fn run_server() -> std::io::Result<()> {
             .service(endpoints::templates::get_template)
             .service(endpoints::templates::get_templates)
             .service(endpoints::templates::submit_template)
+            .service(endpoints::templates::edit_template)
             .service(endpoints::templates::remove_template)
 
             .service(endpoints::schedules::get_schedule)
