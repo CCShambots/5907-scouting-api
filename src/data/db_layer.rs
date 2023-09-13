@@ -24,7 +24,7 @@ use uuid::{Error as UuidError, Uuid};
 use crate::add_template;
 use crate::data::db_layer::Error::ExistsAlready;
 use crate::data::template::Error as TemplateError;
-use crate::logic::messages::{AddType, EditType};
+use crate::logic::messages::{AddType, EditType, RemoveType};
 
 
 impl DBLayer {
@@ -62,6 +62,17 @@ impl DBLayer {
             EditType::Scouter(scouter) => self.edit_scouter(scouter).await,
             EditType::Shift(event, idx, shift) => todo!(),
             EditType::Bytes(bytes, key) => todo!()
+        }
+    }
+
+    pub async fn remove(&self, d_type: &RemoveType) -> Result<String, Error> {
+        match d_type {
+            RemoveType::Form(template, id) => todo!(),
+            RemoveType::Schedule(event) => todo!(),
+            RemoveType::Shift(event, idx) => todo!(),
+            RemoveType::Scouter(key) => todo!(),
+            RemoveType::Bytes(key) => todo!(),
+            RemoveType::Template(name) => todo!()
         }
     }
 
