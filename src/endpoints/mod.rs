@@ -1,4 +1,6 @@
 pub mod forms;
+pub mod templates;
+pub mod schedules;
 
 use actix_web::HttpResponse;
 

@@ -6,7 +6,7 @@ use crate::data::Form;
 use crate::logic::{AppState, Error};
 use crate::logic::messages::{AddType, EditType, Internal, InternalMessage, RemoveType};
 
-#[actix_web::post("/forms/submit/{template}/")]
+#[actix_web::post("/forms/submit/{template}")]
 async fn submit_form(
     data: Data<AppState>,
     path: Path<String>,
@@ -22,7 +22,7 @@ async fn submit_form(
     Ok(HttpResponse::Ok().body(key))
 }
 
-#[actix_web::delete("/forms/remove/template/{template}/id/{id}/")]
+#[actix_web::delete("/forms/remove/template/{template}/id/{id}")]
 async fn remove_form(
     data: Data<AppState>,
     path: Path<(String, Uuid)>
@@ -37,7 +37,7 @@ async fn remove_form(
     Ok(HttpResponse::Ok().finish())
 }
 
-#[actix_web::put("/forms/edit/template/{template}/id/{id}/")]
+#[actix_web::put("/forms/edit/template/{template}/id/{id}")]
 async fn edit_form(
     data: Data<AppState>,
     path: Path<(String, Uuid)>,

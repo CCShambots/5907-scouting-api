@@ -40,7 +40,6 @@ pub enum EditType {
     Form(Form, Uuid, String),
     Schedule(Schedule),
     Scouter(Scouter),
-    Shift(String, u64, Shift),
     Bytes(Vec<u8>, String)
 }
 

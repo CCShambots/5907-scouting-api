@@ -60,8 +60,7 @@ impl DBLayer {
             EditType::Form(form, id, template) => self.edit_form(form, *id, template).await,
             EditType::Schedule(schedule) => self.edit_schedule(schedule).await,
             EditType::Scouter(scouter) => self.edit_scouter(scouter).await,
-            EditType::Shift(event, idx, shift) => todo!(),
-            EditType::Bytes(bytes, key) => todo!()
+            EditType::Bytes(bytes, key) => self.edit_bytes(bytes, key).await
         }
     }
 
@@ -73,6 +72,19 @@ impl DBLayer {
             RemoveType::Scouter(key) => todo!(),
             RemoveType::Bytes(key) => todo!(),
             RemoveType::Template(name) => todo!()
+        }
+    }
+
+    async fn edit_bytes(&self, bytes: &Vec<u8>, key: &str) -> Result<String, Error> {
+        let tree = self.db.open_tree("raw_storage")?;
+
+        match tree.contains_key(key)? {
+            false => Err(Error::DoesNotExist(ItemType::Bytes(key.into()))),
+            true => {
+                &tree.insert(key, &bytes[..])?;
+
+                Ok(Self::jser(&((), key))?)
+            }
         }
     }
 
