@@ -88,6 +88,11 @@ async fn run_server() -> std::io::Result<()> {
             .service(endpoints::bytes::submit_bytes)
             .service(endpoints::bytes::edit_bytes)
             .service(endpoints::bytes::remove_bytes)
+
+            .service(endpoints::shifts::get_shifts)
+            .service(endpoints::shifts::get_shift)
+            .service(endpoints::shifts::submit_shift)
+            .service(endpoints::shifts::remove_shift)
     })
     .bind(("0.0.0.0", 8080))?
     .run()

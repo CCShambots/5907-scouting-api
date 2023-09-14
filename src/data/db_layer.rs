@@ -340,7 +340,33 @@ impl DBLayer {
         }
     }
 
+    pub async fn get_shift(&self, event: &str, idx: u64) -> Result<Shift, Error> {
+        let tree = self.db.open_tree("schedules")?;
 
+        match tree.get(event)? {
+            None => Err(Error::DoesNotExist(ItemType::Schedule(event.into()))),
+            Some(shift) => match serde_cbor::from_slice::<Schedule>(&shift)?.shifts.get(idx as usize) {
+                None => Err(Error::DoesNotExist(ItemType::Shift(event.into(), idx))),
+                Some(shift) => Ok(shift.clone())
+            }
+        }
+    }
+
+    pub async fn get_shifts(&self) -> Result<Vec<(String, u64)>, Error> {
+        let tree = self.db.open_tree("schedules")?;
+
+        Ok(tree
+            .iter()
+            .map(|k| k.unwrap())
+            .map(|(k, v)| {
+                (
+                    String::from_utf8(k.to_vec()).unwrap(),
+                    serde_cbor::from_slice::<Schedule>(&v).unwrap().shifts.len() as u64
+                )
+            })
+            .collect()
+        )
+    }
 
     pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<(Form, Uuid)>, Error> {
         let cache_result = self.get_uuids_from_filter(&template, &filter).await?;
@@ -428,7 +454,7 @@ impl DBLayer {
             .collect())
     }
 
-    pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {
+    pub async fn get_shifts_for_scouter(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {
         let schedule = self.get_schedule(event).await?;
 
         Ok(schedule

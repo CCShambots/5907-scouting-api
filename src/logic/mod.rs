@@ -109,8 +109,16 @@ impl AppState {
         self.db_layer.get_schedule(event).await.map_err(|err| err.into())
     }
 
-    pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {
-        self.db_layer.get_shifts(event, scouter).await.map_err(|err| err.into())
+    pub async fn get_shifts_for_scouter(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {
+        self.db_layer.get_shifts_for_scouter(event, scouter).await.map_err(|err| err.into())
+    }
+
+    pub async fn get_shift(&self, event: &str, idx: u64) -> Result<Shift, Error> {
+        self.db_layer.get_shift(event, idx).await.map_err(|x| x.into())
+    }
+
+    pub async fn get_shifts(&self) -> Result<Vec<(String, u64)>, Error> {
+        self.db_layer.get_shifts().await.map_err(|x| x.into())
     }
 }
 

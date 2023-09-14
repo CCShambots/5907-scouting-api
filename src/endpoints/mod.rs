@@ -3,6 +3,7 @@ pub mod templates;
 pub mod schedules;
 pub mod scouters;
 pub mod bytes;
+pub mod shifts;
 
 use actix_web::HttpResponse;
 
