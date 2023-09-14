@@ -83,7 +83,7 @@ impl DBLayer {
         match tree.contains_key(&template.name)? {
             false => Err(Error::DoesNotExist(ItemType::Template(template.name.clone()))),
             true => {
-                if self.db.open_tree(&template.name)?.len() > 0 {
+                if !self.db.open_tree(&template.name)?.is_empty() {
                     return Err(TemplateHasForms { template: template.name.clone() })
                 }
 
@@ -95,13 +95,13 @@ impl DBLayer {
         }
     }
 
-    async fn edit_bytes(&self, bytes: &Vec<u8>, key: &str) -> Result<String, Error> {
+    async fn edit_bytes(&self, bytes: &[u8], key: &str) -> Result<String, Error> {
         let tree = self.db.open_tree("raw_storage")?;
 
         match tree.contains_key(key)? {
             false => Err(Error::DoesNotExist(ItemType::Bytes(key.into()))),
             true => {
-                tree.insert(key, &bytes[..])?;
+                tree.insert(key, bytes)?;
 
                 Ok(Self::jser(&((), key))?)
             }
