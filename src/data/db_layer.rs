@@ -5,8 +5,6 @@ use actix_web::body::BoxBody;
 use actix_web::http::header::ContentType;
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
-use bincode::config::{Configuration};
-use bincode::error::{DecodeError, EncodeError};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
 use sled::{Batch, Db, IVec, Transactional};
@@ -30,7 +28,6 @@ impl DBLayer {
     pub fn new(db: Db) -> Self {
         Self {
             db,
-            byte_config: bincode::config::standard(),
             cache: RwLock::new(Cache::new()),
             //avoid buffoonery and or shenanigans
             reserved_trees: HashSet::from([
@@ -261,6 +258,10 @@ impl DBLayer {
 
     async fn add_template(&self, template: &FormTemplate) -> Result<String, Error> {
         let tree = self.db.open_tree("templates")?;
+
+        if self.reserved_trees.contains(&template.name) {
+            return Err(Error::NameReserved { name: template.name.clone() })
+        }
 
         match self.template_exists(&template.name) {
             true => Err(Error::ExistsAlready(ItemType::Template(template.name.clone()))),
@@ -661,21 +662,9 @@ impl From<uuid::Error> for Error {
     }
 }
 
-impl From<EncodeError> for Error {
-    fn from(_: EncodeError) -> Self {
-        Error::Encode
-    }
-}
-
 impl From<sled::Error> for Error {
     fn from(_: sled::Error) -> Self {
         Error::CorruptDB
-    }
-}
-
-impl From<DecodeError> for Error {
-    fn from(_: DecodeError) -> Self {
-        Error::Decode
     }
 }
 
@@ -698,6 +687,7 @@ pub enum Error {
     ExistsAlready(ItemType),
     FormDoesNotFollowTemplate{ template: String },
     TemplateHasForms{ template: String },
+    NameReserved{ name: String },
     Decode,
     Encode
 }
@@ -728,7 +718,6 @@ pub enum ItemType {
 pub struct DBLayer {
     db: Db,
     cache: RwLock<Cache>,
-    byte_config: Configuration,
     reserved_trees: HashSet<String>
 }
 

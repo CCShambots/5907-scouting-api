@@ -1,8 +1,10 @@
 pub mod messages;
+mod syncing;
 
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{SeekFrom, Write};
 use std::path::Path;
+use std::sync::Arc;
 use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, ResponseError};
 use actix_web::body::BoxBody;
@@ -29,7 +31,7 @@ impl AppState {
 
 
         Self {
-            db_layer: DBLayer::new(db),
+            db_layer: Arc::new(DBLayer::new(db)),
             config,
         }
     }
@@ -123,7 +125,7 @@ impl AppState {
 }
 
 pub struct AppState {
-    db_layer: DBLayer,
+    db_layer: Arc<DBLayer>,
     config: Settings,
 }
 

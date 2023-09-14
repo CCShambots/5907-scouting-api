@@ -1,13 +1,8 @@
 pub mod db_layer;
 pub mod template;
-
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Result, Value};
 use std::collections::{HashMap, HashSet};
-use bincode::enc::Encoder;
-use bincode::enc::write::Writer;
-use bincode::error::EncodeError;
 use uuid::Uuid;
 
 impl Form {
