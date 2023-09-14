@@ -44,8 +44,6 @@ impl DBLayer {
     }
 
     pub async fn add(&self, d_type: &AddType) -> Result<String, Error> {
-        println!("add");
-
         match d_type {
             AddType::Form(form, template) => self.add_form(form, template).await,
             AddType::Schedule(schedule) => self.add_schedule(schedule).await,
@@ -68,12 +66,100 @@ impl DBLayer {
 
     pub async fn remove(&self, d_type: &RemoveType) -> Result<String, Error> {
         match d_type {
-            RemoveType::Form(template, id) => todo!(),
-            RemoveType::Schedule(event) => todo!(),
-            RemoveType::Shift(event, idx) => todo!(),
-            RemoveType::Scouter(key) => todo!(),
-            RemoveType::Bytes(key) => todo!(),
-            RemoveType::Template(name) => todo!()
+            RemoveType::Form(template, id) => self.remove_form(template, *id).await,
+            RemoveType::Schedule(event) => self.remove_schedule(event).await,
+            RemoveType::Shift(event, idx) => self.remove_shift(event, *idx).await,
+            RemoveType::Scouter(key) => self.remove_scouter(key).await,
+            RemoveType::Bytes(key) => self.remove_bytes(key).await,
+            RemoveType::Template(name) => self.remove_template(name).await
+        }
+    }
+
+    async fn remove_template(&self, name: &str) -> Result<String, Error> {
+        let tree = self.db.open_tree("templates")?;
+
+        match tree.contains_key(name)? {
+            false => Err(Error::DoesNotExist(ItemType::Template(name.into()))),
+            true => {
+                let old: FormTemplate = serde_cbor::from_slice(&tree.remove(name)?.unwrap())?;
+                self.db.drop_tree(name)?;
+
+                Ok(Self::jser(&old)?)
+            }
+        }
+    }
+
+    async fn remove_bytes(&self, key: &str) -> Result<String, Error> {
+        let tree = self.db.open_tree("raw_storage")?;
+
+        match tree.contains_key(key)? {
+            false => Err(Error::DoesNotExist(ItemType::Bytes(key.into()))),
+            true => {
+                self.db.remove(key)?;
+
+                Ok(String::new())
+            }
+        }
+    }
+
+    async fn remove_scouter(&self, key: &str) -> Result<String, Error> {
+        let tree = self.db.open_tree("scouters")?;
+
+        match tree.contains_key(key)? {
+            false => Err(Error::DoesNotExist(ItemType::Scouter(key.into()))),
+            true => {
+                let old: Scouter = serde_cbor::from_slice(&tree.remove(key)?.unwrap())?;
+
+                Ok(Self::jser(&old)?)
+            }
+        }
+    }
+
+    async fn remove_shift(&self, event: &str, idx: u64) -> Result<String, Error> {
+        let tree = self.db.open_tree("schedules")?;
+
+        match tree.contains_key(event)? {
+            false => Err(Error::DoesNotExist(ItemType::Schedule(event.into()))),
+            true => {
+                let mut schedule: Schedule = serde_cbor::from_slice(&tree.get(event)?.unwrap())?;
+
+                if idx > schedule.shifts.len() as u64 - 1 {
+                    return Err(Error::DoesNotExist(ItemType::Shift(event.into(), idx)));
+                }
+
+                let old = schedule.shifts[idx as usize].clone();
+
+                schedule.shifts.remove(idx as usize);
+
+                Ok(Self::jser(&old)?)
+            }
+        }
+    }
+
+    async fn remove_schedule(&self, event: &str) -> Result<String, Error> {
+        let tree = self.db.open_tree("schedules")?;
+
+        match tree.contains_key(event)? {
+            false => Err(Error::DoesNotExist(ItemType::Schedule(event.into()))),
+            true => {
+                let old: Schedule = serde_cbor::from_slice(&tree.remove(event)?.unwrap())?;
+
+                Ok(Self::jser(&old)?)
+            }
+        }
+    }
+
+    async fn remove_form(&self, template: &str, id: Uuid) -> Result<String, Error> {
+        let temp = self.get_template(template).await?;
+        let tree = self.db.open_tree(temp.name)?;
+
+        match tree.contains_key(id)? {
+            false => Err(Error::DoesNotExist(ItemType::Form(template.into(), id))),
+            true => {
+                let old: Form = serde_cbor::from_slice(&tree.remove(id)?.unwrap())?;
+
+                Ok(Self::jser(&old)?)
+            }
         }
     }
 
@@ -244,15 +330,11 @@ impl DBLayer {
         let tree = self.db.open_tree(temp.name)?;
         let id = Uuid::new_v4();
 
-        println!("got through setup");
-
         match tree.contains_key(id)? {
             true => Err(Error::ExistsAlready(ItemType::Form(template.into(), id))),
             false => {
                 tree.insert(id, Self::ser(form)?)?;
-                println!("inserted");
                 self.update_cache(form, id, template).await?;
-                println!("cache updated");
                 Ok(Self::jser(&id)?)
             }
         }
@@ -427,7 +509,6 @@ impl DBLayer {
     }
 
     fn jser(s: &impl Serialize) -> Result<String, Error> {
-        println!("ser");
         serde_json::to_string(s).map_err(|err| { err.into() })
     }
 
