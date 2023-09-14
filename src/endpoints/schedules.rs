@@ -41,7 +41,7 @@ async fn edit_schedule(
 async fn get_schedules(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
-    todo!()
+    Ok(HttpResponse::Ok().json(data.get_schedule_events().await?))
 }
 
 #[actix_web::get("/schedules/get/event/{event}")]

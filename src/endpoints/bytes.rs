@@ -49,7 +49,7 @@ async fn edit_bytes(
 async fn get_bytes(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
-    todo!()
+    Ok(HttpResponse::Ok().json(data.get_bytes().await?))
 }
 
 #[actix_web::get("/bytes/get/key/{key}")]
@@ -57,5 +57,5 @@ async fn get_bytes_by_key(
     data: Data<AppState>,
     path: Path<String>
 ) -> Result<HttpResponse, Error> {
-    todo!()
+    Ok(HttpResponse::Ok().body(data.get_bytes_by_key(&path.into_inner()).await?))
 }

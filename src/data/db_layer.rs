@@ -9,7 +9,7 @@ use bincode::config::{Configuration};
 use bincode::error::{DecodeError, EncodeError};
 use derive_more::{Display, Error};
 use serde::{Deserialize, Serialize};
-use sled::{Batch, Db, Transactional};
+use sled::{Batch, Db, IVec, Transactional};
 use std::array::TryFromSliceError;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
@@ -340,6 +340,8 @@ impl DBLayer {
         }
     }
 
+
+
     pub async fn get(&self, template: String, filter: Filter) -> Result<Vec<(Form, Uuid)>, Error> {
         let cache_result = self.get_uuids_from_filter(&template, &filter).await?;
         let mut set = cache_result[0].clone();
@@ -382,6 +384,48 @@ impl DBLayer {
         let decoded: Schedule = serde_cbor::de::from_slice(&tree.get(event)?.unwrap())?;
 
         Ok(decoded)
+    }
+
+    pub async fn get_bytes_by_key(&self, key: &str) -> Result<Vec<u8>, Error> {
+        let tree = self.db.open_tree("raw_storage")?;
+
+        match tree.get(key)? {
+            None => Err(Error::DoesNotExist(ItemType::Scouter(key.into()))),
+            Some(ser) => Ok(ser.to_vec())
+        }
+    }
+
+    pub async fn get_bytes(&self) -> Result<Vec<String>, Error> {
+        Ok(self.db.open_tree("raw_storage")?
+            .iter()
+            .keys()
+            .map(|k| String::from_utf8(k.unwrap().to_vec()).unwrap())
+            .collect())
+    }
+
+    pub async fn get_schedule_events(&self) -> Result<Vec<String>, Error> {
+        Ok(self.db.open_tree("schedules")?
+            .iter()
+            .keys()
+            .map(|k| String::from_utf8(k.unwrap().to_vec()).unwrap())
+            .collect())
+    }
+
+    pub async fn get_scouter(&self, key: &str) -> Result<Scouter, Error> {
+        let tree = self.db.open_tree("scouters")?;
+
+        match tree.get(key)? {
+            None => Err(Error::DoesNotExist(ItemType::Scouter(key.into()))),
+            Some(ser) => Ok(serde_cbor::from_slice(&ser)?)
+        }
+    }
+
+    pub async fn get_scouters(&self) -> Result<Vec<String>, Error> {
+        Ok(self.db.open_tree("scouters")?
+            .iter()
+            .keys()
+            .map(|k| String::from_utf8(k.unwrap().to_vec()).unwrap())
+            .collect())
     }
 
     pub async fn get_shifts(&self, event: &str, scouter: &str) -> Result<Vec<Shift>, Error> {

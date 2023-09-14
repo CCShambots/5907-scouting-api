@@ -11,7 +11,7 @@ use derive_more::{Display, Error};
 use serde::Serialize;
 use crate::data::db_layer::{DBLayer, Filter, Error as DBError, ItemType};
 use crate::data::template::FormTemplate;
-use crate::data::{Form, Schedule, Shift};
+use crate::data::{Form, Schedule, Scouter, Shift};
 use crate::settings::Settings;
 use sled::Db;
 use tokio::fs::{File, OpenOptions, read};
@@ -63,6 +63,26 @@ impl AppState {
         transaction_log.write_all("]".as_bytes()).await?;
 
         Ok(())
+    }
+
+    pub async fn get_bytes_by_key(&self, key: &str) -> Result<Vec<u8>, Error> {
+        self.db_layer.get_bytes_by_key(key).await.map_err(|x| x.into())
+    }
+
+    pub async fn get_bytes(&self) -> Result<Vec<String>, Error> {
+        self.db_layer.get_bytes().await.map_err(|x| x.into())
+    }
+
+    pub async fn get_schedule_events(&self) -> Result<Vec<String>, Error> {
+        self.db_layer.get_schedule_events().await.map_err(|x| x.into())
+    }
+
+    pub async fn get_scouter(&self, key: &str) -> Result<Scouter, Error> {
+        self.db_layer.get_scouter(key).await.map_err(|x| x.into())
+    }
+
+    pub async fn get_scouters(&self) -> Result<Vec<String>, Error> {
+        self.db_layer.get_scouters().await.map_err(|x| x.into())
     }
 
     pub async fn get_templates(&self) -> Vec<String> {

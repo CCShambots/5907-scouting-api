@@ -41,7 +41,7 @@ async fn edit_scouter(
 async fn get_scouters(
     data: Data<AppState>
 ) -> Result<HttpResponse, Error> {
-    todo!()
+    Ok(HttpResponse::Ok().json(data.get_scouters().await?))
 }
 
 #[actix_web::get("/scouters/get/scouterkey/{key}")]
@@ -49,5 +49,5 @@ async fn get_scouter(
     data: Data<AppState>,
     key: Path<String>
 ) -> Result<HttpResponse, Error> {
-    todo!()
+    Ok(HttpResponse::Ok().json(data.get_scouter(&key.into_inner()).await?))
 }
