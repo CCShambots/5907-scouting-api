@@ -11,13 +11,20 @@ impl SyncHandler {
         }
     }
 
-    fn add_child(&mut self, id: Uuid) -> Result<(), SyncError> {
+    fn add_child(&mut self, id: Uuid) -> Result<(), Error> {
         match self.children.contains_key(&id) {
-            true => Err(SyncError::ChildExists(id)),
+            true => Err(Error::ChildExists(id)),
             false => {
                 self.children.insert(id, None);
                 Ok(())
             }
+        }
+    }
+
+    fn get_child_knowledge(&self, id: Uuid) -> Result<Option<Uuid>, Error> {
+        match self.children.get(&id) {
+            None => Err(Error::ChildDoesNotExist(id)),
+            Some(knowledge) => Ok(*knowledge)
         }
     }
 }
@@ -27,6 +34,7 @@ struct SyncHandler {
     db_layer: Arc<DBLayer>
 }
 
-enum SyncError {
-    ChildExists(Uuid)
+enum Error {
+    ChildExists(Uuid),
+    ChildDoesNotExist(Uuid)
 }
