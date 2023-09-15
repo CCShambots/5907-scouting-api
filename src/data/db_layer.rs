@@ -276,13 +276,13 @@ impl DBLayer {
         }
     }
 
-    async fn add_bytes(&self, bytes: &Vec<u8>, key: &str) -> Result<String, Error> {
+    async fn add_bytes(&self, bytes: &[u8], key: &str) -> Result<String, Error> {
         let tree = self.db.open_tree("raw_storage")?;
 
         match tree.contains_key(key)? {
             true => Err(ExistsAlready(ItemType::Bytes(key.into()))),
             false => {
-                tree.insert(key, &bytes[..])?;
+                tree.insert(key, bytes)?;
                 Ok(Self::jser(&key.to_string())?)
             }
         }
