@@ -38,13 +38,21 @@ impl AppState {
 
     pub async fn mutate(&self, message: InternalMessage) -> Result<String, Error> {
         let key = match &message.msg {
-            Internal::Add(msg) => self.db_layer.add(msg).await,
-            Internal::Remove(msg) => self.db_layer.remove(msg).await,
-            Internal::Edit(msg) => self.db_layer.edit(msg).await
+            Internal::Add(msg) => {
+                println!("Add {}", msg.get_type());
+                self.db_layer.add(msg).await
+            },
+            Internal::Remove(msg) => {
+                println!("Remove {}", msg.get_type());
+                self.db_layer.remove(msg).await
+            },
+            Internal::Edit(msg) => {
+                println!("Edit {}", msg.get_type());
+                self.db_layer.edit(msg).await
+            }
         }?;
 
         self.log_mutation(&message).await?;
-        println!("{:?}", &message);
 
         Ok(key)
     }

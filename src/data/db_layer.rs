@@ -92,7 +92,7 @@ impl DBLayer {
         match tree.contains_key(key)? {
             false => Err(Error::DoesNotExist(ItemType::Bytes(key.into()))),
             true => {
-                self.db.remove(key)?;
+                tree.remove(key)?;
 
                 Ok(String::new())
             }
@@ -127,6 +127,8 @@ impl DBLayer {
                 let old = schedule.shifts[idx as usize].clone();
 
                 schedule.shifts.remove(idx as usize);
+
+                self.edit_schedule(&schedule).await?;
 
                 Ok(Self::jser(&old)?)
             }
@@ -605,6 +607,8 @@ impl Cache {
 
     fn remove_template(&mut self, template: &str) -> Result<(), Error> {
         self.cache.remove(template);
+
+
 
         Ok(())
     }

@@ -8,7 +8,7 @@ use crate::data::{Form, Schedule};
 use crate::settings::Settings;
 use crate::logic::{AppState, Error};
 use actix_cors::Cors;
-use actix_web::web::{Data, Json, Path, Query};
+use actix_web::web::{Data, Json, Path, PayloadConfig, Query};
 use actix_web::{http, main, App, HttpResponse, HttpServer, Result};
 use sled::{Config, Mode};
 use uuid::Uuid;
@@ -52,11 +52,14 @@ async fn run_server() -> std::io::Result<()> {
             .allowed_methods(vec!["GET", "POST", "DELETE", "PUT"])
             .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
             .allowed_header(http::header::CONTENT_TYPE)
-            .max_age(3600);
+            .max_age(3600 * 50);
 
         App::new()
             .app_data(data.clone())
+            .app_data(PayloadConfig::new(1024 * 1024 * 1024 * 10)) //10 gigs
+
             .wrap(cors)
+
             .service(endpoints::status)
 
             .service(endpoints::forms::get_form)

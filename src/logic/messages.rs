@@ -25,6 +25,44 @@ pub enum Internal {
     Edit(EditType)
 }
 
+impl AddType {
+    pub fn get_type(&self) -> String {
+        match self {
+            AddType::Form(_, _) => { "Form".into() }
+            AddType::Schedule(_) => { "Schedule".into() }
+            AddType::Shift(_, _) => { "Shift".into() }
+            AddType::Scouter(_) => { "Scouter".into() }
+            AddType::Bytes(_, _) => { "Bytes".into() }
+            AddType::Template(_) => { "Template".into() }
+        }
+    }
+}
+
+impl EditType {
+    pub fn get_type(&self) -> String {
+        match self {
+            EditType::Form(_, _, _) => { "Form".into() }
+            EditType::Schedule(_) => { "Schedule".into() }
+            EditType::Scouter(_) => { "Scouter".into() }
+            EditType::Bytes(_, _) => { "Bytes".into() }
+            EditType::Template(_) => { "Template".into() }
+        }
+    }
+}
+
+impl RemoveType {
+    pub fn get_type(&self) -> String {
+        match self {
+            RemoveType::Form(_, _) => { "Form".into() }
+            RemoveType::Schedule(_) => { "Schedule".into() }
+            RemoveType::Shift(_, _) => { "Shift".into() }
+            RemoveType::Scouter(_) => { "Scouter".into() }
+            RemoveType::Bytes(_) => { "Bytes".into() }
+            RemoveType::Template(_) => { "Template".into() }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum AddType {
     Form(Form, String),
