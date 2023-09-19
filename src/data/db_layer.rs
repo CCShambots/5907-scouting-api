@@ -234,7 +234,7 @@ impl DBLayer {
         match tree.contains_key(&schedule.event)? {
             false => Err(Error::DoesNotExist(ItemType::Schedule(schedule.event.clone()))),
             true => {
-                let old = serde_cbor::from_slice(&tree.insert(&schedule.event, Self::ser(schedule)?)?.unwrap())?;
+                let old: Schedule = serde_cbor::from_slice(&tree.insert(&schedule.event, Self::ser(schedule)?)?.unwrap())?;
 
                 Ok(Self::jser(&(old, &schedule.event))?)
             }
