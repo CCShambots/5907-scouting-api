@@ -52,6 +52,8 @@ impl AppState {
             }
         }?;
 
+        self.db_layer.flush().await;
+
         self.log_mutation(&message).await?;
 
         Ok(key)
