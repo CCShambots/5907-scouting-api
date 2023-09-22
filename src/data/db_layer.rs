@@ -393,6 +393,10 @@ impl DBLayer {
         Ok((serde_cbor::de::from_slice(&tree.get(uuid)?.unwrap())?, uuid))
     }
 
+    pub async fn flush(&self) {
+        self.db.flush_async().await.unwrap();
+    }
+
     fn get_forms(&self, template: &String, uuids: Vec<&Uuid>) -> Result<Vec<(Form, Uuid)>, Error> {
         let tree = self.db.open_tree(template)?;
 
@@ -554,6 +558,7 @@ impl DBLayer {
                     let form: Form = serde_cbor::from_slice(&pair.1)?;
 
 
+                    println!("updated cache");
                     self.update_cache(&form, uuid, &name).await?;
                 }
             }
