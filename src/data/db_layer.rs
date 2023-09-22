@@ -156,6 +156,7 @@ impl DBLayer {
             false => Err(Error::DoesNotExist(ItemType::Form(template.into(), id))),
             true => {
                 let old: Form = serde_cbor::from_slice(&tree.remove(id)?.unwrap())?;
+                self.cache.write().await.remove(template, &old, id).ok();
 
                 Ok(Self::jser(&old)?)
             }
@@ -609,6 +610,27 @@ impl Cache {
         self.cache.remove(template);
 
 
+
+        Ok(())
+    }
+
+    fn remove(&mut self, template: &str, form: &Form, key: Uuid)  -> Result<(), Error> {
+        let map = self.cache
+            .get_mut(template)
+            .ok_or(Error::DoesNotExist(ItemType::Template(template.into())))?;
+
+        let cache_inputs = vec![
+            CacheInput::Scouter(form.scouter.clone()),
+            CacheInput::Event(form.event_key.clone()),
+            CacheInput::Match(form.match_number),
+            CacheInput::Team(form.team)
+        ];
+
+        for input in cache_inputs {
+            if let Some(cache) = map.get_mut(&input) {
+                cache.remove(&key);
+            }
+        }
 
         Ok(())
     }
