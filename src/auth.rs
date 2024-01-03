@@ -275,7 +275,14 @@ where
                 Ok(token) => Ok(token.custom),
                 Err(error) => {
                     info!("{:?}", error);
-                    Err(StatusCode::UNAUTHORIZED.into_response())
+                    let google_authenticator = parts
+                        .extensions
+                        .get::<Arc<GoogleAuthenticator>>()
+                        .expect("No google authenticator set up");
+
+                    let auth_url = google_authenticator.send_to_login().await;
+
+                    Err(Redirect::to(&auth_url).into_response())
                 }
             }
         } else {

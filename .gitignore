@@ -18,3 +18,6 @@ Cargo.lock
 database/*
 /config.toml
 /transaction_log.json
+/cert.pem
+/key.pem
+/settings.json
