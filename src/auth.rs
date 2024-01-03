@@ -268,7 +268,7 @@ where
 {
     type Rejection = Response;
 
-    #[instrument]
+    #[instrument(skip(parts, _state))]
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         info!("in user extraction");
         let jar = CookieJar::from_headers(&parts.headers);
@@ -343,7 +343,7 @@ pub async fn auth_code(
         .await
 }
 
-#[instrument(ret, skip(jwt_manager, google_authenticator))]
+#[instrument(ret, skip(jwt_manager, google_authenticator, auth_response))]
 pub async fn login_handler(
     auth_response: Option<Query<AuthResponse>>,
     google_authenticator: Extension<Arc<GoogleAuthenticator>>,
