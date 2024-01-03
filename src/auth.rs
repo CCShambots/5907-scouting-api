@@ -271,6 +271,7 @@ where
     #[instrument(skip(parts, _state))]
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         info!("in user extraction");
+        info!("Headers: {:?}", parts.headers);
         let jar = CookieJar::from_headers(&parts.headers);
         if let Some(jwt) = jar.get("jwt") {
             info!("got jwt token");
