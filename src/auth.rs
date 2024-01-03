@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use totp_rs::{Algorithm, TotpUrlError, TOTP};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 /// Auth flow || https://developers.google.com/identity/openid-connect/openid-connect
 ///
@@ -232,6 +232,8 @@ impl JwtManager {
         .with_subject(email);
         self.key_pair.sign(token).unwrap()
     }
+
+    #[instrument(skip(self, jwt))]
     fn validate_jwt(&self, jwt: &str) -> Result<JWTClaims<GoogleUser>, String> {
         let verification_options = VerificationOptions {
             accept_future: false,
@@ -247,10 +249,14 @@ impl JwtManager {
                 if self.accepted_domains.contains(&claims.custom.hd) {
                     Ok(claims)
                 } else {
+                    warn!("Oauth domain not accepted");
                     Err("Not an accepted domain".into())
                 }
             }
-            Err(error) => Err(error.to_string()),
+            Err(error) => {
+                warn!("JWT VALIDATION ERROR {}", error.to_string());
+                Err(error.to_string())
+            },
         }
     }
 }
@@ -267,14 +273,18 @@ where
         info!("in user extraction");
         let jar = CookieJar::from_headers(&parts.headers);
         if let Some(jwt) = jar.get("jwt") {
+            info!("got jwt token");
             let jwt_manager = parts
                 .extensions
                 .get::<Arc<JwtManager>>()
                 .expect("No jwt manager set up");
             match jwt_manager.validate_jwt(jwt.value()) {
-                Ok(token) => Ok(token.custom),
+                Ok(token) => {
+                    info!("jwt accepted");
+                    Ok(token.custom)
+                },
                 Err(error) => {
-                    info!("{:?}", error);
+                    warn!("{:?}", error);
                     let google_authenticator = parts
                         .extensions
                         .get::<Arc<GoogleAuthenticator>>()
@@ -290,6 +300,8 @@ where
                 .extensions
                 .get::<Arc<GoogleAuthenticator>>()
                 .expect("No google authenticator set up");
+
+            warn!("no jwt found!");
 
             let auth_url = google_authenticator.send_to_login().await;
 
