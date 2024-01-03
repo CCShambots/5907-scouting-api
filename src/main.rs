@@ -30,9 +30,6 @@ mod transactions;
 
 #[instrument(ret)]
 async fn handler(user_info: GoogleUser) -> Result<ApiResponse, ApiError> {
-    let sleep_time = rand::random::<u64>() % 5000;
-    tokio::time::sleep(Duration::from_millis(sleep_time)).await;
-    info!("we slept for {}!", sleep_time);
     Ok(ApiResponse::OK(user_info.email))
 }
 
