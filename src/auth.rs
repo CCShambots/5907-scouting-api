@@ -272,14 +272,17 @@ where
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         info!("in user extraction");
         info!("Headers: {:?}", parts.headers);
+        let jwt_header: Option<&str> = parts.headers.get("authorization")
+            .map(|h| h.to_str().unwrap().split('=').nth(1).unwrap()
+            );
         let jar = CookieJar::from_headers(&parts.headers);
-        if let Some(jwt) = jar.get("jwt") {
+        if let Some(jwt) = jar.get("jwt").map(|f| f.value()).or(jwt_header) {
             info!("got jwt token");
             let jwt_manager = parts
                 .extensions
                 .get::<Arc<JwtManager>>()
                 .expect("No jwt manager set up");
-            match jwt_manager.validate_jwt(jwt.value()) {
+            match jwt_manager.validate_jwt(jwt) {
                 Ok(token) => {
                     info!("jwt accepted");
                     Ok(token.custom)
