@@ -11,7 +11,7 @@ axum = { version = "0.7", features = ["tracing", "macros"]}
 axum-extra = {version = "0.9", features = ["cookie", "query", "typed-header"]}
 #axum-server = {  features = ["tls-rustls"], git = "https://github.com/programatik29/axum-server.git", branch = "master"}
 axum-server = {  features = ["tls-rustls"], version = "0.6"}
-tower-http = { version = "0.5", features = ["full"]}
+tower-http = { version = "0.5.0", features = ["full", "cors"] }
 tower = {version = "0.4", features = ["full"]}
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

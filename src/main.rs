@@ -12,8 +12,10 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use opentelemetry_sdk::{trace, Resource};
 use std::sync::Arc;
 use std::time::Duration;
+use axum::http::Method;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
 use tracing_subscriber::layer::SubscriberExt;
@@ -117,6 +119,7 @@ async fn main() {
             "/auth/:code/:email",
             axum::routing::get(auth::get_jwt_cache_from_code),
         )
+        .layer(CorsLayer::very_permissive())
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(Arc::new(google_authenticator)))
@@ -124,7 +127,8 @@ async fn main() {
                 .layer(Extension(Arc::new(jwt_manager)))
                 .layer(metrics)
                 .layer(CompressionLayer::new())
-                .layer(TraceLayer::new_for_http()),
+                .layer(TraceLayer::new_for_http())
+                ,
         );
 
     // Run the application with TLS
