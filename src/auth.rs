@@ -346,7 +346,7 @@ pub async fn get_jwt_cache_from_code(
 
             resp.headers_mut().insert(
                 header::SET_COOKIE,
-                HeaderValue::from_str("jwt=deleted; expires=Thu, 01 Jan 1970 00:00:00 GMT")
+                HeaderValue::from_str("jwt=deleted; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT")
                     .unwrap(),
             );
 
