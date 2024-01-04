@@ -408,7 +408,7 @@ impl StorageManager {
         let mut keys: Vec<String> = Vec::new();
 
         while let Some(entry) = entries.next_entry().await? {
-            if !entry.path().to_string_lossy().contains('.') {
+            if entry.path().to_string_lossy().ends_with(".current") {
                 let mut f = File::open(entry.path()).await?;
                 let len = f.read_u64().await?;
                 let mut bytes = vec![0_u8; len as usize];
