@@ -1,4 +1,4 @@
-use crate::datatypes::FormTemplate;
+use crate::datatypes::{FormTemplate, Schedule};
 use crate::transactions::{Action, DataType, InternalMessage};
 use anyhow::anyhow;
 use datafusion::arrow::array::RecordBatch;
@@ -32,6 +32,31 @@ pub struct StorageManager {
 }
 
 impl StorageManager {
+    #[instrument(skip(self))]
+    async fn add_template_form_dir(&self, name: &str) -> Result<(), anyhow::Error> {
+        fs::create_dir(format!("{}/forms/{name}", self.path))
+            .await
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    async fn rename_template_form_dir(&self, name: &str, old: &str) -> Result<(), anyhow::Error> {
+        fs::rename(
+            format!("{}/forms/{name}", self.path),
+            format!("{}/forms/{old}", self.path),
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    async fn template_dir(&self, name: &str, old_name: Option<&str>) -> Result<(), anyhow::Error> {
+        match old_name {
+            None => self.add_template_form_dir(name).await,
+            Some(old_name) => self.rename_template_form_dir(name, old_name).await,
+        }
+    }
+
     #[instrument(skip(self, data))]
     pub async fn raw_edit(
         &self,
@@ -93,29 +118,110 @@ impl StorageManager {
             .map_err(Into::into)
     }
 
-    #[instrument(skip(self))]
-    async fn add_template_form_dir(&self, name: &str) -> Result<(), anyhow::Error> {
-        fs::create_dir(format!("{}/forms/{name}", self.path))
-            .await
-            .map_err(Into::into)
-    }
+    #[instrument(skip(self, schedule))]
+    pub async fn schedules_add(&self, schedule: Schedule) -> Result<(), anyhow::Error> {
+        let digested_name = (&schedule.event).digest();
+        let digested_name = format!("{}.current", digested_name);
 
-    #[instrument(skip(self))]
-    async fn rename_template_form_dir(&self, name: &str, old: &str) -> Result<(), anyhow::Error> {
-        fs::rename(
-            format!("{}/forms/{name}", self.path),
-            format!("{}/forms/{old}", self.path),
+        self.raw_add(
+            &digested_name,
+            "schedules/",
+            serde_json::to_string(&schedule)?.as_bytes(),
         )
-        .await
-        .map_err(Into::into)
+        .await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Schedule,
+                Action::Add,
+                digested_name,
+            ))
+            .await
+    }
+
+    #[instrument(skip(self, schedule))]
+    pub async fn schedules_edit(&self, schedule: Schedule) -> Result<(), anyhow::Error> {
+        let digested_name = (&schedule.event).digest();
+        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
+        let digested_name = format!("{}.current", digested_name);
+
+        self.raw_edit(
+            &digested_name,
+            &old,
+            "schedules/",
+            serde_json::to_string(&schedule)?.as_bytes(),
+        )
+        .await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(DataType::Schedule, Action::Edit, old))
+            .await
     }
 
     #[instrument(skip(self))]
-    async fn template_dir(&self, name: &str, old_name: Option<&str>) -> Result<(), anyhow::Error> {
-        match old_name {
-            None => self.add_template_form_dir(name).await,
-            Some(old_name) => self.rename_template_form_dir(name, old_name).await,
+    pub async fn schedules_delete(&self, name: String) -> Result<(), anyhow::Error> {
+        let digested_name = (&name).digest();
+        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
+        let digested_name = format!("{}.current", digested_name);
+
+        self.raw_delete(&digested_name, &old, "schedules/").await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Schedule,
+                Action::Delete,
+                old,
+            ))
+            .await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn schedules_get(&self, name: String) -> Result<Schedule, anyhow::Error> {
+        let digested_name = (&name).digest();
+        let digested_name = format!("{}.current", digested_name);
+
+        let bytes = self.raw_get(&digested_name, "schedules/").await?;
+
+        serde_json::from_slice(bytes.as_slice()).map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn schedules_list(&self) -> Result<Vec<String>, anyhow::Error> {
+        if !self.df_ctx.table_exist("schedules")? {
+            let path = ListingTableUrl::parse(format!("{}schedules", self.path))?;
+            let file_format = JsonFormat::default();
+            let listing_options =
+                ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
+            let schema = SchemaRef::new(Schema::new(vec![Field::new(
+                "event",
+                datafusion::arrow::datatypes::DataType::Utf8,
+                false,
+            )]));
+            let config = ListingTableConfig::new(path)
+                .with_listing_options(listing_options)
+                .with_schema(schema);
+            let provider = Arc::new(ListingTable::try_new(config)?);
+
+            self.df_ctx.register_table("schedules", provider)?;
         }
+
+        let df = self.df_ctx.table("schedules").await?;
+        let res = df.select(vec![col("event")])?.collect().await?;
+
+        let res: Vec<&RecordBatch> = res.iter().collect();
+
+        let res = record_batches_to_json_rows(res.as_slice())?;
+
+        let res = res
+            .iter()
+            .filter_map(|m| m.get("event"))
+            .filter_map(|thing| match thing {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+
+        Ok(res)
     }
 
     #[instrument(skip(self, template))]
@@ -126,7 +232,7 @@ impl StorageManager {
         self.raw_add(
             &digested_name,
             "templates/",
-            serde_json::to_string(&template).unwrap().as_bytes(),
+            serde_json::to_string(&template)?.as_bytes(),
         )
         .await?;
 
@@ -151,7 +257,7 @@ impl StorageManager {
             &digested_name,
             &old,
             "templates/",
-            serde_json::to_string(&template).unwrap().as_bytes(),
+            serde_json::to_string(&template)?.as_bytes(),
         )
         .await?;
 

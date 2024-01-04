@@ -25,7 +25,6 @@ pub enum DataType {
     Bytes,
     Form(String),
     Schedule,
-    Scouter,
     Template,
 }
 

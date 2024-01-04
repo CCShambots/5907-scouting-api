@@ -24,6 +24,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod auth;
 mod bytes;
 mod datatypes;
+mod schedules;
 mod storage_manager;
 mod sync;
 mod templates;
@@ -117,7 +118,7 @@ async fn main() {
             axum::routing::get(templates::list_templates),
         )
         .route(
-            "/protected/template/",
+            "/protected/template/:template",
             axum::routing::get(templates::get_template),
         )
         .route(
@@ -131,6 +132,27 @@ async fn main() {
         .route(
             "/protected/template/",
             axum::routing::post(templates::add_template),
+        )
+        //schedules
+        .route(
+            "/protected/schedules/",
+            axum::routing::get(schedules::list_schedules),
+        )
+        .route(
+            "/protected/schedule/:schedule",
+            axum::routing::get(schedules::get_schedule),
+        )
+        .route(
+            "/protected/schedule/",
+            axum::routing::patch(schedules::edit_schedule),
+        )
+        .route(
+            "/protected/schedule/:schedule",
+            axum::routing::delete(schedules::delete_schedule),
+        )
+        .route(
+            "/protected/schedule/",
+            axum::routing::post(schedules::add_schedule),
         )
         //sync
         .route("/protected/sync/:last_id", axum::routing::get(sync::sync))

@@ -113,10 +113,3 @@ pub struct Shift {
     pub match_start: u32,
     pub match_end: u32,
 }
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Scouter {
-    name: String,
-    team: i32,
-    accuracy: f32,
-}
