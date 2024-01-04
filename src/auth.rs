@@ -278,6 +278,8 @@ where
             .and_then(|h| h.to_str().ok())
             .map(|s| s.replace("jwt=", ""));
 
+        info!("jwt: {:?}", jwt_header);
+
         let jar = CookieJar::from_headers(&parts.headers);
         if let Some(jwt) = jar.get("jwt").map(|f| f.value().to_string()).or(jwt_header) {
             info!("got jwt token");
