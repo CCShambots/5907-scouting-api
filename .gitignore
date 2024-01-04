@@ -21,3 +21,4 @@ database/*
 /cert.pem
 /key.pem
 /settings.json
+/data/**
