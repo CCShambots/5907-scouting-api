@@ -1,16 +1,17 @@
-use crate::datatypes::{FormTemplate, Schedule};
+use crate::datatypes::{Filter, Form, FormTemplate, Schedule};
 use crate::transactions::{Action, DataType, InternalMessage};
 use anyhow::anyhow;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::array::{Array, AsArray};
-use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes;
+use datafusion::arrow::datatypes::{Field, FieldRef, Schema, SchemaRef};
 use datafusion::arrow::json::writer::record_batches_to_json_rows;
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::datasource::file_format::json::JsonFormat;
 use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
-use datafusion::prelude::{col, SessionContext};
+use datafusion::prelude::{col, lit, SessionContext};
 use glob::glob;
 use serde::Deserialize;
 use serde_json::Value;
@@ -116,6 +117,150 @@ impl StorageManager {
         fs::read(format!("{}{sub_path}{name}", &self.path))
             .await
             .map_err(Into::into)
+    }
+
+    #[instrument(skip(self, form))]
+    pub async fn forms_add(&self, template: String, form: Form) -> Result<(), anyhow::Error> {
+        let ser = serde_json::to_string(&form)?;
+        let digested = format!("{}.current", (&ser).digest());
+        let template = self.templates_get(template).await?;
+
+        if !template.validate_form(&form) {
+            return Err(anyhow!("form does not follow template"));
+        }
+
+        self.raw_add(
+            &digested,
+            &format!("forms/{}.current/", (&template.name).digest()),
+            ser.as_bytes(),
+        )
+        .await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Form(template.name),
+                Action::Add,
+                digested,
+            ))
+            .await
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip(self, form))]
+    pub async fn forms_edit(&self, template: String, form: Form) -> Result<(), anyhow::Error> {
+        let ser = serde_json::to_string(&form)?;
+        let digested = (&ser).digest();
+        let old = format!("{}.{}", digested, Uuid::new_v4());
+        let digested = format!("{}.current", digested);
+        let template = self.templates_get(template).await?;
+
+        if !template.validate_form(&form) {
+            return Err(anyhow!("form does not follow template"));
+        }
+
+        self.raw_edit(
+            &digested,
+            &old,
+            &format!("forms/{}.current/", (&template.name).digest()),
+            ser.as_bytes(),
+        )
+        .await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Form(template.name),
+                Action::Edit,
+                digested,
+            ))
+            .await
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn forms_delete(&self, template: String, name: String) -> Result<(), anyhow::Error> {
+        let old = format!("{}.{}", name, Uuid::new_v4());
+        let digested = format!("{}.current", name);
+
+        self.raw_delete(
+            &digested,
+            &old,
+            &format!("forms/{}.current/", (&template).digest()),
+        )
+        .await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Form(template),
+                Action::Delete,
+                digested,
+            ))
+            .await
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn forms_get(&self, template: String, name: String) -> Result<Form, anyhow::Error> {
+        let digested = format!("{}.current", name);
+
+        let bytes = self
+            .raw_get(
+                &digested,
+                &format!("forms/{}.current/", (&template).digest()),
+            )
+            .await?;
+
+        serde_json::from_slice(bytes.as_slice()).map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn forms_filter(
+        &self,
+        template: String,
+        filter: Filter,
+    ) -> Result<Vec<Form>, anyhow::Error> {
+        use datafusion::arrow::datatypes;
+
+        let path = format!("{}forms/{}", self.path, template.digest());
+
+        if fs::metadata(&path).await.is_err() {
+            return Err(anyhow!("template does not exist"));
+        }
+
+        let path = ListingTableUrl::parse(path)?;
+        let state = self.df_ctx.state();
+        let file_format = JsonFormat::default();
+        let listing_options =
+            ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
+        let schema = SchemaRef::new(Schema::new(vec![]));
+        let config = ListingTableConfig::new(path)
+            .with_listing_options(listing_options)
+            .with_schema(schema);
+        let provider = Arc::new(ListingTable::try_new(config)?);
+
+        let df = self.df_ctx.read_table(provider)?;
+
+        let mut df_filter = col("fields").is_not_null();
+
+        if let Some(f) = filter.event {
+            df_filter = df_filter.and(col("event_key").eq(lit(f)));
+        }
+        if let Some(f) = filter.scouter {
+            df_filter = df_filter.and(col("scouter").eq(lit(f)));
+        }
+        if let Some(f) = filter.match_number {
+            df_filter = df_filter.and(col("match_number").eq(lit(f)));
+        }
+        if let Some(f) = filter.team {
+            df_filter = df_filter.and(col("team").eq(lit(f)));
+        }
+
+        let res = df.filter(df_filter)?.collect().await?;
+
+        let res: Vec<&RecordBatch> = res.iter().collect();
+        let res = record_batches_to_json_rows(res.as_slice())?;
+        let ser = serde_json::to_string(&res)?;
+
+        serde_json::from_str(&ser).map_err(Into::into)
     }
 
     #[instrument(skip(self, schedule))]

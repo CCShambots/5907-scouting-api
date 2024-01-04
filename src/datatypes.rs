@@ -91,6 +91,14 @@ pub struct Form {
     pub event_key: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Filter {
+    pub match_number: Option<i64>,
+    pub team: Option<i64>,
+    pub event: Option<String>,
+    pub scouter: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldData {
     CheckBox(bool),

@@ -24,6 +24,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod auth;
 mod bytes;
 mod datatypes;
+mod forms;
 mod schedules;
 mod storage_manager;
 mod sync;
@@ -153,6 +154,27 @@ async fn main() {
         .route(
             "/protected/schedule/",
             axum::routing::post(schedules::add_schedule),
+        )
+        //schedules
+        .route(
+            "/protected/forms/:template/:filter",
+            axum::routing::get(forms::filter_forms),
+        )
+        .route(
+            "/protected/form/:template/:name",
+            axum::routing::get(forms::get_form),
+        )
+        .route(
+            "/protected/form/:template",
+            axum::routing::patch(forms::edit_form),
+        )
+        .route(
+            "/protected/form/:template/:name",
+            axum::routing::delete(forms::delete_form),
+        )
+        .route(
+            "/protected/form/:template",
+            axum::routing::post(forms::add_form),
         )
         //sync
         .route("/protected/sync/:last_id", axum::routing::get(sync::sync))
