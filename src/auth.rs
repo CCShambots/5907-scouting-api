@@ -291,6 +291,15 @@ where
             match jwt_manager.validate_jwt(&jwt) {
                 Ok(token) => {
                     info!("jwt accepted");
+                    let google_authenticator = parts
+                        .extensions
+                        .get::<Arc<GoogleAuthenticator>>()
+                        .expect("No google authenticator set up");
+
+                    google_authenticator
+                        .set_jwt_cache(token.custom.email.clone(), jwt)
+                        .await;
+
                     Ok(token.custom)
                 }
                 Err(error) => {
