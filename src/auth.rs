@@ -271,7 +271,6 @@ where
     #[instrument(skip(parts, _state))]
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         info!("in user extraction");
-        info!("Headers: {:?}", parts.headers);
         let jwt_header: Option<String> = parts
             .headers
             .get("authorization")
