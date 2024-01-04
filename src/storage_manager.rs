@@ -1,23 +1,38 @@
 use crate::datatypes::FormTemplate;
-use crate::transactions::{AddType, EditType, Internal, InternalMessage, RemoveType};
+use crate::transactions::{Action, DataType, InternalMessage};
 use anyhow::anyhow;
+use datafusion::arrow::array::RecordBatch;
+use datafusion::arrow::array::{Array, AsArray};
+use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
+use datafusion::arrow::json::writer::record_batches_to_json_rows;
+use datafusion::arrow::util::pretty::pretty_format_batches;
+use datafusion::datasource::file_format::json::JsonFormat;
+use datafusion::datasource::listing::{
+    ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
+};
+use datafusion::prelude::{col, SessionContext};
 use glob::glob;
 use serde::Deserialize;
+use serde_json::Value;
+use sha256::Sha256Digest;
 use std::path::Path;
+use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
 use tracing::{info, instrument};
 use uuid::Uuid;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct StorageManager {
     transaction_log: TransactionLog,
     path: String,
+    #[serde(skip)]
+    df_ctx: SessionContext,
 }
 
 impl StorageManager {
-    #[instrument(skip(data))]
+    #[instrument(skip(self, data))]
     pub async fn raw_edit(
         &self,
         name: &str,
@@ -38,7 +53,7 @@ impl StorageManager {
             .map_err(Into::into)
     }
 
-    #[instrument(skip(data))]
+    #[instrument(skip(self, data))]
     pub async fn raw_add(
         &self,
         name: &str,
@@ -52,7 +67,7 @@ impl StorageManager {
             .map_err(Into::into)
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn raw_delete(
         &self,
         name: &str,
@@ -69,7 +84,7 @@ impl StorageManager {
         .map_err(Into::into)
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn raw_get(&self, name: &str, sub_path: &str) -> Result<Vec<u8>, anyhow::Error> {
         info!("Get at {sub_path}{name}");
 
@@ -78,13 +93,152 @@ impl StorageManager {
             .map_err(Into::into)
     }
 
-    #[instrument(skip(data))]
+    #[instrument(skip(self))]
+    async fn add_template_form_dir(&self, name: &str) -> Result<(), anyhow::Error> {
+        fs::create_dir(format!("{}/forms/{name}", self.path))
+            .await
+            .map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    async fn rename_template_form_dir(&self, name: &str, old: &str) -> Result<(), anyhow::Error> {
+        fs::rename(
+            format!("{}/forms/{name}", self.path),
+            format!("{}/forms/{old}", self.path),
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    async fn template_dir(&self, name: &str, old_name: Option<&str>) -> Result<(), anyhow::Error> {
+        match old_name {
+            None => self.add_template_form_dir(name).await,
+            Some(old_name) => self.rename_template_form_dir(name, old_name).await,
+        }
+    }
+
+    #[instrument(skip(self, template))]
+    pub async fn templates_add(&self, template: FormTemplate) -> Result<(), anyhow::Error> {
+        let digested_name = (&template.name).digest();
+        let digested_name = format!("{}.current", digested_name);
+
+        self.raw_add(
+            &digested_name,
+            "templates/",
+            serde_json::to_string(&template).unwrap().as_bytes(),
+        )
+        .await?;
+
+        self.template_dir(&digested_name, None).await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Template,
+                Action::Add,
+                digested_name,
+            ))
+            .await
+    }
+
+    #[instrument(skip(self, template))]
+    pub async fn templates_edit(&self, template: FormTemplate) -> Result<(), anyhow::Error> {
+        let digested_name = (&template.name).digest();
+        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
+        let digested_name = format!("{}.current", digested_name);
+
+        self.raw_edit(
+            &digested_name,
+            &old,
+            "templates/",
+            serde_json::to_string(&template).unwrap().as_bytes(),
+        )
+        .await?;
+
+        self.template_dir(&digested_name, Some(&old)).await?;
+        self.template_dir(&digested_name, None).await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(DataType::Template, Action::Edit, old))
+            .await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn templates_delete(&self, name: String) -> Result<(), anyhow::Error> {
+        let digested_name = name.digest();
+        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
+        let digested_name = format!("{}.current", digested_name);
+
+        self.raw_delete(&digested_name, &old, "templates/").await?;
+
+        self.template_dir(&digested_name, Some(&old)).await?;
+
+        self.transaction_log
+            .log_transaction(InternalMessage::new(
+                DataType::Template,
+                Action::Delete,
+                old,
+            ))
+            .await
+    }
+
+    #[instrument(skip(self))]
+    pub async fn templates_get(&self, name: String) -> Result<FormTemplate, anyhow::Error> {
+        let digested_name = name.digest();
+        let digested_name = format!("{}.current", digested_name);
+        let bytes = self.raw_get(&digested_name, "templates/").await?;
+
+        serde_json::from_slice(bytes.as_slice()).map_err(Into::into)
+    }
+
+    #[instrument(skip(self), ret)]
+    pub async fn templates_list(&self) -> Result<Vec<String>, anyhow::Error> {
+        if !self.df_ctx.table_exist("templates")? {
+            let path = ListingTableUrl::parse(format!("{}templates", self.path))?;
+            let file_format = JsonFormat::default();
+            let listing_options =
+                ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
+            let schema = SchemaRef::new(Schema::new(vec![Field::new(
+                "name",
+                datafusion::arrow::datatypes::DataType::Utf8,
+                false,
+            )]));
+            let config = ListingTableConfig::new(path)
+                .with_listing_options(listing_options)
+                .with_schema(schema);
+            let provider = Arc::new(ListingTable::try_new(config)?);
+
+            self.df_ctx.register_table("templates", provider)?;
+        }
+
+        let df = self.df_ctx.table("templates").await?;
+        let res = df.select(vec![col("name")])?.collect().await?;
+
+        let res: Vec<&RecordBatch> = res.iter().collect();
+
+        let res = record_batches_to_json_rows(res.as_slice())?;
+
+        let res = res
+            .iter()
+            .filter_map(|m| m.get("name"))
+            .filter_map(|thing| match thing {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+
+        Ok(res)
+    }
+
+    #[instrument(skip(self, data))]
     pub async fn bytes_add(
         &self,
         name: String,
         desired_key: String,
         data: &[u8],
     ) -> Result<(), anyhow::Error> {
+        let name = format!("{name}.current");
+
         self.raw_add(
             &name,
             "bytes/",
@@ -98,12 +252,11 @@ impl StorageManager {
         .await?;
 
         self.transaction_log
-            .log_transaction(InternalMessage::new(Internal::Add(AddType::Bytes(name))))
+            .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, name))
             .await
-            .map_err(Into::into)
     }
 
-    #[instrument(skip(data))]
+    #[instrument(skip(self, data))]
     pub async fn bytes_edit(
         &self,
         name: String,
@@ -111,6 +264,7 @@ impl StorageManager {
         data: &[u8],
     ) -> Result<(), anyhow::Error> {
         let old = format!("{}.{}", &name, Uuid::new_v4());
+        let name = format!("{name}.current");
 
         self.raw_edit(
             &name,
@@ -126,28 +280,23 @@ impl StorageManager {
         .await?;
 
         self.transaction_log
-            .log_transaction(InternalMessage::new(Internal::Edit(EditType::Bytes(
-                name, old,
-            ))))
+            .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, old))
             .await
-            .map_err(Into::into)
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn bytes_delete(&self, name: String) -> Result<(), anyhow::Error> {
         let old = format!("{}.{}", &name, Uuid::new_v4());
+        let name = format!("{name}.current");
 
         self.raw_delete(&name, &old, "bytes/").await?;
 
         self.transaction_log
-            .log_transaction(InternalMessage::new(Internal::Remove(RemoveType::Bytes(
-                name, old,
-            ))))
+            .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, old))
             .await
-            .map_err(Into::into)
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn bytes_list(&self) -> Result<Vec<String>, anyhow::Error> {
         let mut entries = fs::read_dir(format!("{}bytes/", self.path)).await?;
         let mut keys: Vec<String> = Vec::new();
@@ -167,8 +316,10 @@ impl StorageManager {
         Ok(keys)
     }
 
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn bytes_get(&self, name: String) -> Result<Vec<u8>, anyhow::Error> {
+        let name = format!("{name}.current");
+
         let bytes = self.raw_get(&name, "bytes/").await?;
 
         let len = u64::from_be_bytes([

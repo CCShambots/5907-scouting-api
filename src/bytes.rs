@@ -14,8 +14,7 @@ pub async fn store_bytes(
     storage_manager: Extension<Arc<StorageManager>>,
     parts: Bytes,
 ) -> StoreBytesResponse {
-    let mut blob_id = blob_id.clone();
-    blob_id.truncate(32);
+    let blob_id = blob_id.clone();
 
     let id = sha256::digest(&blob_id);
 
@@ -30,8 +29,7 @@ pub async fn get_bytes(
     Path(blob_id): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> StoreBytesResponse {
-    let mut blob_id = blob_id.clone();
-    blob_id.truncate(32);
+    let blob_id = blob_id.clone();
 
     let blob_id = sha256::digest(blob_id);
 
@@ -46,8 +44,7 @@ pub async fn delete_bytes(
     Path(blob_id): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> StoreBytesResponse {
-    let mut blob_id = blob_id.clone();
-    blob_id.truncate(32);
+    let blob_id = blob_id.clone();
 
     let blob_id = sha256::digest(blob_id);
 
@@ -62,8 +59,7 @@ pub async fn edit_bytes(
     storage_manager: Extension<Arc<StorageManager>>,
     parts: Bytes,
 ) -> StoreBytesResponse {
-    let mut blob_id = blob_id.clone();
-    blob_id.truncate(32);
+    let blob_id = blob_id.clone();
 
     let id = sha256::digest(&blob_id);
 
@@ -72,9 +68,7 @@ pub async fn edit_bytes(
         .await
     {
         Ok(_) => StoreBytesResponse::OK,
-        Err(_) => {
-            todo!()
-        }
+        Err(_) => StoreBytesResponse::FailedToEdit,
     }
 }
 

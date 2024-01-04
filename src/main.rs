@@ -1,6 +1,7 @@
 use crate::storage_manager::StorageManager;
 use auth::{GoogleAuthenticator, GoogleUser, JwtManagerBuilder};
 use axum::body::Body;
+use axum::http::Method;
 use axum::middleware::from_extractor;
 use axum::response::{IntoResponse, Response};
 use axum::Extension;
@@ -12,7 +13,6 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use opentelemetry_sdk::{trace, Resource};
 use std::sync::Arc;
 use std::time::Duration;
-use axum::http::Method;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -26,6 +26,7 @@ mod bytes;
 mod datatypes;
 mod storage_manager;
 mod sync;
+mod templates;
 mod transactions;
 
 #[instrument(ret)]
@@ -92,6 +93,7 @@ async fn main() {
     let router = axum::Router::new()
         .route("/protected", axum::routing::get(handler))
         .route("/protected/code", axum::routing::get(auth::auth_code))
+        //bytes
         .route("/protected/bytes/", axum::routing::get(bytes::list_bytes))
         .route(
             "/protected/bytes/:blob_id",
@@ -109,6 +111,28 @@ async fn main() {
             "/protected/bytes/:blob_id",
             axum::routing::patch(bytes::edit_bytes),
         )
+        //templates
+        .route(
+            "/protected/templates/",
+            axum::routing::get(templates::list_templates),
+        )
+        .route(
+            "/protected/template/",
+            axum::routing::get(templates::get_template),
+        )
+        .route(
+            "/protected/template/",
+            axum::routing::patch(templates::edit_template),
+        )
+        .route(
+            "/protected/template/:template",
+            axum::routing::delete(templates::delete_template),
+        )
+        .route(
+            "/protected/template/",
+            axum::routing::post(templates::add_template),
+        )
+        //sync
         .route("/protected/sync/:last_id", axum::routing::get(sync::sync))
         .layer(from_extractor::<GoogleUser>())
         .route("/", axum::routing::get(auth::login_handler))
@@ -124,8 +148,7 @@ async fn main() {
                 .layer(Extension(Arc::new(jwt_manager)))
                 .layer(metrics)
                 .layer(CompressionLayer::new())
-                .layer(TraceLayer::new_for_http())
-                ,
+                .layer(TraceLayer::new_for_http()),
         );
 
     // Run the application with TLS
