@@ -346,7 +346,8 @@ pub async fn get_jwt_cache_from_code(
 
             resp.headers_mut().insert(
                 header::SET_COOKIE,
-                HeaderValue::from_str(&Cookie::new("jwt", "relogin").to_string()).unwrap(),
+                HeaderValue::from_str("jwt=deleted; expires=Thu, 01 Jan 1970 00:00:00 GMT")
+                    .unwrap(),
             );
 
             resp
