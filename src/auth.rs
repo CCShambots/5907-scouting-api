@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use totp_rs::{Algorithm, TotpUrlError, TOTP};
-use tracing::{info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 /// Auth flow || https://developers.google.com/identity/openid-connect/openid-connect
 ///
@@ -339,7 +339,18 @@ pub async fn get_jwt_cache_from_code(
 
             resp
         }
-        Err(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
+        Err(msg) => {
+            let mut resp = Redirect::to("/protected/code").into_response();
+
+            error!("[{}]!, deleting cookies and redirecting to login", msg);
+
+            resp.headers_mut().insert(
+                header::SET_COOKIE,
+                HeaderValue::from_str(&Cookie::new("jwt", "").to_string()).unwrap(),
+            );
+
+            resp
+        }
     }
 }
 
