@@ -256,7 +256,7 @@ impl JwtManager {
             Err(error) => {
                 warn!("JWT VALIDATION ERROR {}", error.to_string());
                 Err(error.to_string())
-            },
+            }
         }
     }
 }
@@ -272,21 +272,24 @@ where
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         info!("in user extraction");
         info!("Headers: {:?}", parts.headers);
-        let jwt_header: Option<&str> = parts.headers.get("authorization")
-            .map(|h| h.to_str().unwrap().split('=').nth(1).unwrap()
-            );
+        let jwt_header: Option<String> = parts
+            .headers
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.replace("jwt=", ""));
+
         let jar = CookieJar::from_headers(&parts.headers);
-        if let Some(jwt) = jar.get("jwt").map(|f| f.value()).or(jwt_header) {
+        if let Some(jwt) = jar.get("jwt").map(|f| f.value().to_string()).or(jwt_header) {
             info!("got jwt token");
             let jwt_manager = parts
                 .extensions
                 .get::<Arc<JwtManager>>()
                 .expect("No jwt manager set up");
-            match jwt_manager.validate_jwt(jwt) {
+            match jwt_manager.validate_jwt(&jwt) {
                 Ok(token) => {
                     info!("jwt accepted");
                     Ok(token.custom)
-                },
+                }
                 Err(error) => {
                     warn!("{:?}", error);
                     let google_authenticator = parts
