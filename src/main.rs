@@ -155,9 +155,13 @@ async fn main() {
             "/protected/schedule/",
             axum::routing::post(schedules::add_schedule),
         )
-        //schedules
+        //forms
         .route(
-            "/protected/forms/:template/:filter",
+            "/protected/forms/:template/ids",
+            axum::routing::get(forms::list_forms)
+        )
+        .route(
+            "/protected/forms/:template/",
             axum::routing::get(forms::filter_forms),
         )
         .route(
@@ -165,7 +169,7 @@ async fn main() {
             axum::routing::get(forms::get_form),
         )
         .route(
-            "/protected/form/:template",
+            "/protected/form/:template/:id/edit",
             axum::routing::patch(forms::edit_form),
         )
         .route(

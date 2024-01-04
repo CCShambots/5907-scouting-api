@@ -120,9 +120,10 @@ impl StorageManager {
     }
 
     #[instrument(skip(self, form))]
-    pub async fn forms_add(&self, template: String, form: Form) -> Result<(), anyhow::Error> {
+    pub async fn forms_add(&self, template: String, form: Form) -> Result<String, anyhow::Error> {
         let ser = serde_json::to_string(&form)?;
-        let digested = format!("{}.current", (&ser).digest());
+        let pre = Uuid::new_v4().to_string();
+        let digested = format!("{}.current", (&pre).digest());
         let template = self.templates_get(template).await?;
 
         if !template.validate_form(&form) {
@@ -142,14 +143,16 @@ impl StorageManager {
                 Action::Add,
                 digested,
             ))
-            .await
-            .map_err(Into::into)
+            .await?;
+
+        Ok(pre)
     }
 
     #[instrument(skip(self, form))]
-    pub async fn forms_edit(&self, template: String, form: Form) -> Result<(), anyhow::Error> {
+    pub async fn forms_edit(&self, template: String, form: Form, id: String) -> Result<(), anyhow::Error> {
         let ser = serde_json::to_string(&form)?;
-        let digested = (&ser).digest();
+        let pre = id.to_string();
+        let digested = (&pre).digest();
         let old = format!("{}.{}", digested, Uuid::new_v4());
         let digested = format!("{}.current", digested);
         let template = self.templates_get(template).await?;
@@ -177,9 +180,9 @@ impl StorageManager {
     }
 
     #[instrument(skip(self))]
-    pub async fn forms_delete(&self, template: String, name: String) -> Result<(), anyhow::Error> {
-        let old = format!("{}.{}", name, Uuid::new_v4());
-        let digested = format!("{}.current", name);
+    pub async fn forms_delete(&self, template: String, id: String) -> Result<(), anyhow::Error> {
+        let old = format!("{}.{}", id, Uuid::new_v4());
+        let digested = format!("{}.current", id.digest());
 
         self.raw_delete(
             &digested,
@@ -199,8 +202,8 @@ impl StorageManager {
     }
 
     #[instrument(skip(self))]
-    pub async fn forms_get(&self, template: String, name: String) -> Result<Form, anyhow::Error> {
-        let digested = format!("{}.current", name);
+    pub async fn forms_get(&self, template: String, id: String) -> Result<Form, anyhow::Error> {
+        let digested = format!("{}.current", id.digest());
 
         let bytes = self
             .raw_get(
@@ -213,17 +216,33 @@ impl StorageManager {
     }
 
     #[instrument(skip(self))]
+    pub async fn forms_list(&self, template: String) -> Result<Vec<String>, anyhow::Error> {
+        let mut files = fs::read_dir(format!("{}forms/{}.current", self.path, template.digest())).await?;
+        let mut names: Vec<String> = vec![];
+
+        while let Some(entry) = files.next_entry().await? {
+            if entry.path().ends_with(".current") {
+                names.push(entry.path().to_string_lossy().to_string().replace(".current", ""));
+            }
+        }
+
+        Ok(names)
+    }
+
+    #[instrument(skip(self))]
     pub async fn forms_filter(
         &self,
         template: String,
         filter: Filter,
     ) -> Result<Vec<Form>, anyhow::Error> {
-        use datafusion::arrow::datatypes;
-
-        let path = format!("{}forms/{}", self.path, template.digest());
+        let path = format!("{}forms/{}.current/", self.path, template.digest());
 
         if fs::metadata(&path).await.is_err() {
-            return Err(anyhow!("template does not exist"));
+            return Ok(vec![]);
+        }
+
+        if std::fs::read_dir(&path)?.count() < 1 {
+            return Ok(vec![]);
         }
 
         let path = ListingTableUrl::parse(path)?;
@@ -231,7 +250,7 @@ impl StorageManager {
         let file_format = JsonFormat::default();
         let listing_options =
             ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
-        let schema = SchemaRef::new(Schema::new(vec![]));
+        let schema = listing_options.infer_schema(&state, &path).await?;
         let config = ListingTableConfig::new(path)
             .with_listing_options(listing_options)
             .with_schema(schema);

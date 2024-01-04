@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use datafusion::arrow::compute::filter;
 use std::sync::Arc;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 #[instrument(skip(form, storage_manager))]
 pub async fn add_form(
@@ -16,8 +16,19 @@ pub async fn add_form(
     Json(form): Json<Form>,
 ) -> FormsResponse {
     match storage_manager.forms_add(template, form).await {
-        Ok(_) => FormsResponse::OK,
+        Ok(id) => FormsResponse::ID(id),
         Err(_) => FormsResponse::FailedToAdd,
+    }
+}
+
+#[instrument(skip(storage_manager))]
+pub async fn list_forms(
+    Path(template): Path<String>,
+    storage_manager: Extension<Arc<StorageManager>>
+) -> FormsResponse {
+    match storage_manager.forms_list(template).await {
+        Ok(l) => FormsResponse::IDList(l),
+        Err(_) => FormsResponse::FailedToRead
     }
 }
 
@@ -34,11 +45,11 @@ pub async fn get_form(
 
 #[instrument(skip(storage_manager, form))]
 pub async fn edit_form(
-    Path(template): Path<String>,
+    Path((template, id)): Path<(String, String)>,
     storage_manager: Extension<Arc<StorageManager>>,
     Json(form): Json<Form>,
 ) -> FormsResponse {
-    match storage_manager.forms_edit(template, form).await {
+    match storage_manager.forms_edit(template, form, id).await {
         Ok(_) => FormsResponse::OK,
         Err(_) => FormsResponse::FailedToEdit,
     }
@@ -50,6 +61,8 @@ pub async fn filter_forms(
     Query(filter): Query<Filter>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> FormsResponse {
+    info!("Filter: {:?}", filter);
+
     match storage_manager.forms_filter(template, filter).await {
         Ok(l) => FormsResponse::Filtered(l),
         Err(_) => FormsResponse::FailedToRead,
@@ -70,6 +83,8 @@ pub async fn delete_form(
 #[derive(Debug)]
 pub enum FormsResponse {
     OK,
+    ID(String),
+    IDList(Vec<String>),
     Form(Form),
     Filtered(Vec<Form>),
     FailedToAdd,
@@ -88,6 +103,8 @@ impl IntoResponse for FormsResponse {
             FormsResponse::FailedToDelete => StatusCode::BAD_REQUEST.into_response(),
             FormsResponse::FailedToRead => StatusCode::BAD_REQUEST.into_response(),
             FormsResponse::Filtered(l) => (StatusCode::OK, Json(l)).into_response(),
+            FormsResponse::ID(id) => (StatusCode::OK, Json(id)).into_response(),
+            FormsResponse::IDList(ids) => (StatusCode::OK, Json(ids)).into_response()
         }
     }
 }
