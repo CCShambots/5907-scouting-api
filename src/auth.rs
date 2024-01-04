@@ -276,9 +276,11 @@ where
             .headers
             .get("authorization")
             .and_then(|h| h.to_str().ok())
+            .and_then(|h| match h.is_empty() {
+                true => None,
+                false => Some(h),
+            })
             .map(|s| s.replace("jwt=", ""));
-
-        info!("jwt: {:?}", jwt_header);
 
         let jar = CookieJar::from_headers(&parts.headers);
         if let Some(jwt) = jar.get("jwt").map(|f| f.value().to_string()).or(jwt_header) {
