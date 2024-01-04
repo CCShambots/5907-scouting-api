@@ -297,7 +297,7 @@ where
                         .expect("No google authenticator set up");
 
                     google_authenticator
-                        .set_jwt_cache(token.custom.email.clone(), jwt)
+                        .set_jwt_cache(token.custom.email.clone(), format!("jwt={}", jwt))
                         .await;
 
                     Ok(token.custom)
