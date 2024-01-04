@@ -181,8 +181,9 @@ impl StorageManager {
 
     #[instrument(skip(self))]
     pub async fn forms_delete(&self, template: String, id: String) -> Result<(), anyhow::Error> {
-        let old = format!("{}.{}", id, Uuid::new_v4());
-        let digested = format!("{}.current", id.digest());
+        let dig = id.digest();
+        let old = format!("{}.{}", &dig, Uuid::new_v4());
+        let digested = format!("{}.current", &dig);
 
         self.raw_delete(
             &digested,
