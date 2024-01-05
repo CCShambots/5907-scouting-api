@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
 #[derive(Default, Deserialize)]
@@ -121,8 +121,10 @@ impl StorageManager {
 
     #[instrument(skip(self, form))]
     pub async fn forms_add(&self, template: String, form: Form) -> Result<String, anyhow::Error> {
-        let ser = serde_json::to_string(&form)?;
         let pre = Uuid::new_v4().to_string();
+        let mut form = form;
+        form.id = Some(pre.clone());
+        let ser = serde_json::to_string(&form)?;
         let digested = format!("{}.current", (&pre).digest());
         let template = self.templates_get(template).await?;
 
@@ -149,9 +151,16 @@ impl StorageManager {
     }
 
     #[instrument(skip(self, form))]
-    pub async fn forms_edit(&self, template: String, form: Form, id: String) -> Result<(), anyhow::Error> {
-        let ser = serde_json::to_string(&form)?;
+    pub async fn forms_edit(
+        &self,
+        template: String,
+        form: Form,
+        id: String,
+    ) -> Result<(), anyhow::Error> {
         let pre = id.to_string();
+        let mut form = form;
+        form.id = Some(pre.clone());
+        let ser = serde_json::to_string(&form)?;
         let digested = (&pre).digest();
         let old = format!("{}.{}", digested, Uuid::new_v4());
         let digested = format!("{}.current", digested);
@@ -218,15 +227,24 @@ impl StorageManager {
 
     #[instrument(skip(self))]
     pub async fn forms_list(&self, template: String) -> Result<Vec<String>, anyhow::Error> {
-        let mut files = fs::read_dir(format!("{}forms/{}.current", self.path, template.digest())).await?;
+        let mut files =
+            fs::read_dir(format!("{}forms/{}.current", self.path, template.digest())).await?;
+
         let mut names: Vec<String> = vec![];
 
         while let Some(entry) = files.next_entry().await? {
-            if entry.path().ends_with(".current") {
-                names.push(entry.path().to_string_lossy().to_string().replace(".current", ""));
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .to_string()
+                .ends_with(".current")
+            {
+                let de: Form = serde_json::from_slice(fs::read(entry.path()).await?.as_ref())?;
+                if let Some(id) = de.id {
+                    names.push(id);
+                }
             }
         }
-
         Ok(names)
     }
 

@@ -1,3 +1,4 @@
+use crate::datatypes::ItemPath;
 use crate::storage_manager::StorageManager;
 use auth::{GoogleAuthenticator, GoogleUser, JwtManagerBuilder};
 use axum::body::Body;
@@ -25,6 +26,7 @@ mod auth;
 mod bytes;
 mod datatypes;
 mod forms;
+mod misc;
 mod schedules;
 mod storage_manager;
 mod sync;
@@ -158,22 +160,22 @@ async fn main() {
         //forms
         .route(
             "/protected/forms/:template/ids",
-            axum::routing::get(forms::list_forms)
+            axum::routing::get(forms::list_forms),
         )
         .route(
             "/protected/forms/:template/",
             axum::routing::get(forms::filter_forms),
         )
         .route(
-            "/protected/form/:template/:name",
+            "/protected/form/:template/:id",
             axum::routing::get(forms::get_form),
         )
         .route(
-            "/protected/form/:template/:id/edit",
+            "/protected/form/:template/:id",
             axum::routing::patch(forms::edit_form),
         )
         .route(
-            "/protected/form/:template/:name",
+            "/protected/form/:template/:id",
             axum::routing::delete(forms::delete_form),
         )
         .route(
@@ -183,6 +185,7 @@ async fn main() {
         //sync
         .route("/protected/sync/:last_id", axum::routing::get(sync::sync))
         .layer(from_extractor::<GoogleUser>())
+        .layer(from_extractor::<ItemPath>())
         .route("/", axum::routing::get(auth::login_handler))
         .route(
             "/auth/:code/:email",
@@ -247,7 +250,3 @@ fn setup_tracing() {
         .try_init()
         .unwrap();
 }
-
-// TODO
-// Docker compose for jaeger + service
-// very short iceberg storage example
