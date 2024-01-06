@@ -211,6 +211,10 @@ impl StorageManager {
             .map_err(Into::into)
     }
 
+    pub fn get_path(&self) -> &str {
+        &self.path
+    }
+
     #[instrument(skip(self))]
     pub async fn forms_get(&self, template: String, id: String) -> Result<Form, anyhow::Error> {
         let digested = format!("{}.current", id.digest());

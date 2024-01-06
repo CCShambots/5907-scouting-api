@@ -95,6 +95,7 @@ async fn main() {
 
     // set up the routes and middleware
     let router = axum::Router::new()
+        .route("/protected/age/*path", axum::routing::get(misc::age))
         .route("/protected", axum::routing::get(handler))
         .route("/protected/code", axum::routing::get(auth::auth_code))
         //bytes

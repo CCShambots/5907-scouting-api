@@ -133,7 +133,7 @@ pub struct Shift {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct ItemPath(Option<String>);
+pub struct ItemPath(pub Option<String>);
 
 #[async_trait]
 impl<S> FromRequestParts<S> for ItemPath
@@ -146,7 +146,7 @@ where
         let uri = parts
             .uri
             .path()
-            .replace("/watch", "")
+            .replace("/age/", "")
             .replace("/protected", "");
 
         let uri: Vec<&str> = uri.split('/').collect();
