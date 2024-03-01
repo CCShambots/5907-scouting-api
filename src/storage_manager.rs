@@ -43,7 +43,7 @@ impl StorageManager {
 
     #[instrument(skip(self), ret)]
     pub async fn glob(&self) -> Result<Vec<String>, anyhow::Error> {
-        let paths = glob::glob(&format!("{}/**.*", self.get_path()))?;
+        let paths = glob::glob(&format!("{}/**/*.*", self.get_path()))?;
 
         Ok(
             paths.filter_map(|p| p.ok())
@@ -246,11 +246,15 @@ impl StorageManager {
         self.check_table("forms", "forms/").await?;
 
         let df = self.df_ctx.table("forms").await?;
+        let df2 = self.df_ctx.table("forms").await?;
+
+        df2.show().await?;
 
         let df_filter = col("fields").is_not_null()
             .and(col("deleted").eq(lit(false)));
 
         let mut data = df.filter(df_filter)?;
+
         data = data.select(vec![max(col("timestamp"))])?;
 
         let res = data.collect().await?;

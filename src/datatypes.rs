@@ -16,6 +16,8 @@ impl FormTemplate {
             fields: vec![],
             name: name.into(),
             year,
+            timestamp: None,
+            deleted: None,
         }
     }
 
