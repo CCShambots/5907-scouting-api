@@ -6,13 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = {  version = "1.35", features = ["full"] }
-axum = { version = "0.7", features = ["tracing", "macros"]}
-axum-extra = {version = "0.9", features = ["cookie", "query", "typed-header"]}
+tokio = { version = "1.35", features = ["full"] }
+axum = { version = "0.7", features = ["tracing", "macros"] }
+axum-extra = { version = "0.9", features = ["cookie", "query", "typed-header"] }
 #axum-server = {  features = ["tls-rustls"], git = "https://github.com/programatik29/axum-server.git", branch = "master"}
-axum-server = {  features = ["tls-rustls"], version = "0.6"}
+axum-server = { features = ["tls-rustls"], version = "0.6" }
 tower-http = { version = "0.5.0", features = ["full", "cors"] }
-tower = {version = "0.4", features = ["full"]}
+tower = { version = "0.4", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum-otel-metrics = "0.8"
@@ -37,3 +37,5 @@ totp-rs = "5.4.0"
 data-encoding = "2.5.0"
 chrono = "0.4.31"
 datafusion = "34.0.0"
+object_store = "0.9.0"
+kv = "0.24.0"

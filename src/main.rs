@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use crate::datatypes::ItemPath;
 use crate::storage_manager::StorageManager;
 use auth::{GoogleAuthenticator, GoogleUser, JwtManagerBuilder};
@@ -21,6 +22,8 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, instrument};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use uuid::Uuid;
+use crate::sync::{ChildID, SyncManager};
 
 mod auth;
 mod bytes;
@@ -87,6 +90,11 @@ async fn main() {
         .get::<JwtManagerBuilder>("jwt_manager")
         .unwrap()
         .build();
+
+    let sync_manager = settings
+        .get::<SyncManager>("sync")
+        .unwrap();
+
     setup_tracing();
     // set up metrics for adding into the application
     let metrics = axum_otel_metrics::HttpMetricsLayerBuilder::new().build();
@@ -183,8 +191,6 @@ async fn main() {
             "/protected/form/:template",
             axum::routing::post(forms::add_form),
         )
-        //sync
-        .route("/protected/sync/:last_id", axum::routing::get(sync::sync))
         .layer(from_extractor::<GoogleUser>())
         .layer(from_extractor::<ItemPath>())
         .route("/", axum::routing::get(auth::login_handler))
@@ -192,16 +198,22 @@ async fn main() {
             "/auth/:code/:email",
             axum::routing::get(auth::get_jwt_cache_from_code),
         )
+        //Sync
+        .route("/sync/diff", axum::routing::get(sync::diff))
+        .route_layer(from_extractor::<ChildID>())
         .layer(CorsLayer::very_permissive())
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(Arc::new(google_authenticator)))
                 .layer(Extension(Arc::new(storage_manager)))
                 .layer(Extension(Arc::new(jwt_manager)))
+                .layer(Extension(Arc::new(sync_manager)))
                 .layer(metrics)
                 .layer(CompressionLayer::new())
                 .layer(TraceLayer::new_for_http()),
         );
+
+    info!("Starting http server");
 
     // Run the application with TLS
     let ssl_config = RustlsConfig::from_pem_file(tls_config.cert_path, tls_config.key_path)
@@ -213,6 +225,8 @@ async fn main() {
             .await
             .unwrap()
     });
+
+    info!("starting metrics server");
 
     // Metrics endpoint should be published on a non-TLS port separately
     axum_server::bind(tls_config.metrics_bind.parse().unwrap())

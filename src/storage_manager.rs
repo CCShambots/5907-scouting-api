@@ -11,13 +11,14 @@ use datafusion::datasource::file_format::json::JsonFormat;
 use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
-use datafusion::prelude::{col, lit, SessionContext};
+use datafusion::prelude::{col, lit, max, SessionContext};
 use glob::glob;
 use serde::Deserialize;
 use serde_json::Value;
 use sha256::Sha256Digest;
 use std::path::Path;
 use std::sync::Arc;
+use chrono::Utc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
@@ -40,14 +41,25 @@ impl StorageManager {
             .map_err(Into::into)
     }
 
+    #[instrument(skip(self), ret)]
+    pub async fn glob(&self) -> Result<Vec<String>, anyhow::Error> {
+        let paths = glob::glob(&format!("{}/**.*", self.get_path()))?;
+
+        Ok(
+            paths.filter_map(|p| p.ok())
+                .map(|p| p.to_string_lossy().replace("\\", "/").replace(self.get_path(), ""))
+                .collect()
+        )
+    }
+
     #[instrument(skip(self))]
     async fn rename_template_form_dir(&self, name: &str, old: &str) -> Result<(), anyhow::Error> {
         fs::rename(
             format!("{}/forms/{name}", self.path),
             format!("{}/forms/{old}", self.path),
         )
-        .await
-        .map_err(Into::into)
+            .await
+            .map_err(Into::into)
     }
 
     #[instrument(skip(self))]
@@ -72,7 +84,7 @@ impl StorageManager {
             format!("{}{sub_path}{name}", &self.path),
             format!("{}{sub_path}{old_name}", &self.path),
         )
-        .await?;
+            .await?;
 
         write_non_create(format!("{}{sub_path}{name}", &self.path), data)
             .await
@@ -106,8 +118,8 @@ impl StorageManager {
             format!("{}{sub_path}{name}", &self.path),
             format!("{}{sub_path}{old_name}", &self.path),
         )
-        .await
-        .map_err(Into::into)
+            .await
+            .map_err(Into::into)
     }
 
     #[instrument(skip(self))]
@@ -124,8 +136,10 @@ impl StorageManager {
         let pre = Uuid::new_v4().to_string();
         let mut form = form;
         form.id = Some(pre.clone());
+        form.timestamp = Some(Utc::now().timestamp());
+        form.deleted = Some(false);
         let ser = serde_json::to_string(&form)?;
-        let digested = format!("{}.current", (&pre).digest());
+        let digested = format!("{}.{}", (&pre).digest(), Uuid::new_v4().to_string().digest());
         let template = self.templates_get(template).await?;
 
         if !template.validate_form(&form) {
@@ -134,10 +148,10 @@ impl StorageManager {
 
         self.raw_add(
             &digested,
-            &format!("forms/{}.current/", (&template.name).digest()),
+            "forms/",
             ser.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
@@ -160,23 +174,23 @@ impl StorageManager {
         let pre = id.to_string();
         let mut form = form;
         form.id = Some(pre.clone());
+        form.timestamp = Some(Utc::now().timestamp());
+        form.deleted = Some(false);
         let ser = serde_json::to_string(&form)?;
-        let digested = (&pre).digest();
-        let old = format!("{}.{}", digested, Uuid::new_v4());
-        let digested = format!("{}.current", digested);
+        let mut digested = (&pre).digest();
+        digested = format!("{}.{}", digested, Uuid::new_v4().to_string().digest());
         let template = self.templates_get(template).await?;
 
         if !template.validate_form(&form) {
             return Err(anyhow!("form does not follow template"));
         }
 
-        self.raw_edit(
+        self.raw_add(
             &digested,
-            &old,
-            &format!("forms/{}.current/", (&template.name).digest()),
+            "forms/",
             ser.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
@@ -190,22 +204,26 @@ impl StorageManager {
 
     #[instrument(skip(self))]
     pub async fn forms_delete(&self, template: String, id: String) -> Result<(), anyhow::Error> {
-        let dig = id.digest();
-        let old = format!("{}.{}", &dig, Uuid::new_v4());
-        let digested = format!("{}.current", &dig);
+        let mut dig = id.clone().digest();
+        dig = format!("{}.{}", dig, Uuid::new_v4().to_string().digest());
 
-        self.raw_delete(
-            &digested,
-            &old,
-            &format!("forms/{}.current/", (&template).digest()),
+        let mut form = self.forms_get(template.clone(), id).await?;
+
+        form.deleted = Some(true);
+        form.timestamp = Some(Utc::now().timestamp());
+
+        self.raw_add(
+            &dig,
+            "forms/",
+            serde_json::to_string(&form)?.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
                 DataType::Form(template),
                 Action::Delete,
-                digested,
+                dig,
             ))
             .await
             .map_err(Into::into)
@@ -217,16 +235,34 @@ impl StorageManager {
 
     #[instrument(skip(self))]
     pub async fn forms_get(&self, template: String, id: String) -> Result<Form, anyhow::Error> {
-        let digested = format!("{}.current", id.digest());
+        let path = format!("{}forms/", self.path);
 
-        let bytes = self
-            .raw_get(
-                &digested,
-                &format!("forms/{}.current/", (&template).digest()),
-            )
-            .await?;
+        fs::metadata(&path).await?;
 
-        serde_json::from_slice(bytes.as_slice()).map_err(Into::into)
+        if std::fs::read_dir(&path)?.count() < 1 {
+            return Err(anyhow!("no forms"));
+        }
+
+        self.check_table("forms", "forms/").await?;
+
+        let df = self.df_ctx.table("forms").await?;
+
+        let df_filter = col("fields").is_not_null()
+            .and(col("deleted").eq(lit(false)));
+
+        let mut data = df.filter(df_filter)?;
+        data = data.select(vec![max(col("timestamp"))])?;
+
+        let res: Vec<&RecordBatch> = data.collect().await?.iter().collect();
+
+        if res.is_empty() {
+            return Err(anyhow!("form does not exist"));
+        }
+
+        let res = record_batches_to_json_rows(&res[..])?;
+        let ser = serde_json::to_string(&res[0])?;
+
+        serde_json::from_str(&ser).map_err(Into::into)
     }
 
     #[instrument(skip(self))]
@@ -252,13 +288,32 @@ impl StorageManager {
         Ok(names)
     }
 
+    async fn check_table(&self, name: &str, path: &str) -> Result<(), anyhow::Error> {
+        if !self.df_ctx.table_exist(name)? {
+            let path = ListingTableUrl::parse(path)?;
+            let state = self.df_ctx.state();
+            let file_format = JsonFormat::default();
+            let listing_options =
+                ListingOptions::new(Arc::new(file_format));
+            let schema = listing_options.infer_schema(&state, &path).await?;
+            let config = ListingTableConfig::new(path)
+                .with_listing_options(listing_options)
+                .with_schema(schema);
+            let provider = Arc::new(ListingTable::try_new(config)?);
+
+            self.df_ctx.register_table(name, provider)?;
+        }
+
+        Ok(())
+    }
+
     #[instrument(skip(self))]
     pub async fn forms_filter(
         &self,
         template: String,
         filter: Filter,
     ) -> Result<Vec<Form>, anyhow::Error> {
-        let path = format!("{}forms/{}.current/", self.path, template.digest());
+        let path = format!("{}forms/", self.path);
 
         if fs::metadata(&path).await.is_err() {
             return Ok(vec![]);
@@ -268,20 +323,15 @@ impl StorageManager {
             return Ok(vec![]);
         }
 
-        let path = ListingTableUrl::parse(path)?;
-        let state = self.df_ctx.state();
-        let file_format = JsonFormat::default();
-        let listing_options =
-            ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
-        let schema = listing_options.infer_schema(&state, &path).await?;
-        let config = ListingTableConfig::new(path)
-            .with_listing_options(listing_options)
-            .with_schema(schema);
-        let provider = Arc::new(ListingTable::try_new(config)?);
+        self.check_table("forms", "forms/").await?;
 
-        let df = self.df_ctx.read_table(provider)?;
+        let df = self.df_ctx.table("forms").await?;
 
         let mut df_filter = col("fields").is_not_null();
+
+        df_filter = df_filter
+            .and(col("template").eq(lit(template)))
+            .and(col("deleted").eq(lit(false)));
 
         if let Some(f) = filter.event {
             df_filter = df_filter.and(col("event_key").eq(lit(f)));
@@ -315,7 +365,7 @@ impl StorageManager {
             "schedules/",
             serde_json::to_string(&schedule)?.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
@@ -338,7 +388,7 @@ impl StorageManager {
             "schedules/",
             serde_json::to_string(&schedule)?.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(DataType::Schedule, Action::Edit, old))
@@ -421,7 +471,7 @@ impl StorageManager {
             "templates/",
             serde_json::to_string(&template)?.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.template_dir(&digested_name, None).await?;
 
@@ -446,7 +496,7 @@ impl StorageManager {
             "templates/",
             serde_json::to_string(&template)?.as_bytes(),
         )
-        .await?;
+            .await?;
 
         self.template_dir(&digested_name, Some(&old)).await?;
         self.template_dir(&digested_name, None).await?;
@@ -540,9 +590,9 @@ impl StorageManager {
                 desired_key.as_bytes(),
                 data,
             ]
-            .concat(),
+                .concat(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, name))
@@ -568,9 +618,9 @@ impl StorageManager {
                 desired_key.as_bytes(),
                 data,
             ]
-            .concat(),
+                .concat(),
         )
-        .await?;
+            .await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, old))

@@ -59,6 +59,13 @@ impl FieldTemplate {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+struct BytesReference {
+    pub name: String,
+    pub timestamp: Option<i64>,
+    pub deleted: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 struct FieldTemplate {
     data_type: FieldDataType,
     name: String,
@@ -69,6 +76,8 @@ pub struct FormTemplate {
     fields: Vec<FieldTemplate>,
     pub name: String,
     year: i64,
+    pub timestamp: Option<i64>,
+    pub deleted: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
@@ -99,6 +108,8 @@ pub struct Form {
     pub match_number: i64,
     pub event_key: String,
     pub id: Option<String>,
+    pub timestamp: Option<i64>,
+    pub deleted: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -122,6 +133,8 @@ pub enum FieldData {
 pub struct Schedule {
     pub event: String,
     pub shifts: Vec<Shift>,
+    pub timestamp: Option<i64>,
+    pub deleted: Option<bool>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
@@ -137,8 +150,8 @@ pub struct ItemPath(pub Option<String>);
 
 #[async_trait]
 impl<S> FromRequestParts<S> for ItemPath
-where
-    S: Send + Sync + std::fmt::Debug,
+    where
+        S: Send + Sync + std::fmt::Debug,
 {
     type Rejection = Response;
 
