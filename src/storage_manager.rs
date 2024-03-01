@@ -253,7 +253,9 @@ impl StorageManager {
         let mut data = df.filter(df_filter)?;
         data = data.select(vec![max(col("timestamp"))])?;
 
-        let res: Vec<&RecordBatch> = data.collect().await?.iter().collect();
+        let res = data.collect().await?;
+
+        let res: Vec<&RecordBatch> = res.iter().collect();
 
         if res.is_empty() {
             return Err(anyhow!("form does not exist"));
