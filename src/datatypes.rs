@@ -112,6 +112,7 @@ pub struct Form {
     pub id: Option<String>,
     pub timestamp: Option<i64>,
     pub deleted: Option<bool>,
+    pub template: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

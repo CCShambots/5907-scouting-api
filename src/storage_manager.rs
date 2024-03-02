@@ -1,3 +1,4 @@
+use std::ops::Add;
 use crate::datatypes::{Filter, Form, FormTemplate, Schedule};
 use crate::transactions::{Action, DataType, InternalMessage};
 use anyhow::anyhow;
@@ -11,18 +12,19 @@ use datafusion::datasource::file_format::json::JsonFormat;
 use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
 };
-use datafusion::prelude::{col, lit, max, SessionContext};
+use datafusion::prelude::{col, DataFrame, lit, max, NdJsonReadOptions, SessionContext};
 use glob::glob;
 use serde::Deserialize;
 use serde_json::Value;
 use sha256::Sha256Digest;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use chrono::Utc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 #[derive(Default, Deserialize)]
@@ -138,7 +140,8 @@ impl StorageManager {
         form.id = Some(pre.clone());
         form.timestamp = Some(Utc::now().timestamp());
         form.deleted = Some(false);
-        let ser = serde_json::to_string(&form)?;
+        form.template = Some(template.clone());
+        let ser = serde_json::to_string(&form)?.add("\n");
         let digested = format!("{}.{}", (&pre).digest(), Uuid::new_v4().to_string().digest());
         let template = self.templates_get(template).await?;
 
@@ -146,12 +149,15 @@ impl StorageManager {
             return Err(anyhow!("form does not follow template"));
         }
 
-        self.raw_add(
-            &digested,
-            "forms/",
-            ser.as_bytes(),
-        )
+        let mut f = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(format!("{}forms/forms.jsonl", self.get_path()))
             .await?;
+
+        f.write_all(ser.as_bytes()).await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
@@ -176,7 +182,8 @@ impl StorageManager {
         form.id = Some(pre.clone());
         form.timestamp = Some(Utc::now().timestamp());
         form.deleted = Some(false);
-        let ser = serde_json::to_string(&form)?;
+        form.template = Some(template.clone());
+        let ser = serde_json::to_string(&form)?.add("\n");
         let mut digested = (&pre).digest();
         digested = format!("{}.{}", digested, Uuid::new_v4().to_string().digest());
         let template = self.templates_get(template).await?;
@@ -185,12 +192,15 @@ impl StorageManager {
             return Err(anyhow!("form does not follow template"));
         }
 
-        self.raw_add(
-            &digested,
-            "forms/",
-            ser.as_bytes(),
-        )
+        let mut f = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(format!("{}forms/forms.jsonl", self.get_path()))
             .await?;
+
+        f.write_all(ser.as_bytes()).await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
@@ -211,13 +221,19 @@ impl StorageManager {
 
         form.deleted = Some(true);
         form.timestamp = Some(Utc::now().timestamp());
+        form.template = Some(template.clone());
 
-        self.raw_add(
-            &dig,
-            "forms/",
-            serde_json::to_string(&form)?.as_bytes(),
-        )
+        let ser = serde_json::to_string(&form)?.add("\n");
+
+        let mut f = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(format!("{}forms/forms.jsonl", self.get_path()))
             .await?;
+
+        f.write_all(ser.as_bytes()).await?;
 
         self.transaction_log
             .log_transaction(InternalMessage::new(
@@ -243,19 +259,19 @@ impl StorageManager {
             return Err(anyhow!("no forms"));
         }
 
-        self.check_table("forms", "forms/").await?;
+        self.check_table("forms", &path).await?;
 
         let df = self.df_ctx.table("forms").await?;
-        let df2 = self.df_ctx.table("forms").await?;
-
-        df2.show().await?;
 
         let df_filter = col("fields").is_not_null()
-            .and(col("deleted").eq(lit(false)));
+            .and(col("template").eq(lit(template)))
+            .and(col("id").eq(lit(id)));
 
-        let mut data = df.filter(df_filter)?;
-
-        data = data.select(vec![max(col("timestamp"))])?;
+        let data = df
+            .filter(df_filter)?
+            .sort(vec![col("timestamp").sort(false, true)])?
+            .limit(0, Some(1))?
+            .filter(col("deleted").eq(lit(false)))?;
 
         let res = data.collect().await?;
 
@@ -273,25 +289,72 @@ impl StorageManager {
 
     #[instrument(skip(self))]
     pub async fn forms_list(&self, template: String) -> Result<Vec<String>, anyhow::Error> {
-        let mut files =
-            fs::read_dir(format!("{}forms/{}.current", self.path, template.digest())).await?;
+        let path = format!("{}forms/", self.path);
 
-        let mut names: Vec<String> = vec![];
+        fs::metadata(&path).await?;
 
-        while let Some(entry) = files.next_entry().await? {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .to_string()
-                .ends_with(".current")
-            {
-                let de: Form = serde_json::from_slice(fs::read(entry.path()).await?.as_ref())?;
-                if let Some(id) = de.id {
-                    names.push(id);
-                }
-            }
+        if std::fs::read_dir(&path)?.count() < 1 {
+            return Err(anyhow!("no forms"));
         }
-        Ok(names)
+
+        self.check_table("forms", &path).await?;
+
+        let mut df = self.df_ctx.table("forms").await?;
+        df = df.cache().await?;
+
+        let data = df.clone()
+            .filter(col("template").eq(lit(template)))?
+            .select(vec![col("id")])?
+            .distinct()?;
+
+        let res = data.collect().await?;
+
+        let res: Vec<&RecordBatch> = res.iter().collect();
+
+        let res = record_batches_to_json_rows(&res[..])?;
+        let ser = serde_json::to_string(&res)?;
+
+        let val = Value::from_str(&ser)?;
+
+        let mut ids: Vec<String> = val
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.get("id").unwrap().as_str().unwrap().to_string())
+            .collect();
+
+        let mut i: i32 = 0;
+
+        while (i as usize) < ids.len() {
+            let id = &ids[i as usize];
+
+            if self.form_deleted(id, df.clone()).await? {
+                ids.remove(i as usize);
+                i -= 1;
+            }
+
+            i += 1;
+        }
+
+        Ok(ids)
+    }
+
+    async fn form_deleted(&self, id: &str, df: DataFrame) -> Result<bool, anyhow::Error> {
+        let path = format!("{}forms/", self.path);
+
+        fs::metadata(&path).await?;
+
+        if std::fs::read_dir(&path)?.count() < 1 {
+            return Err(anyhow!("no forms"));
+        }
+
+        self.check_table("forms", &path).await?;
+
+        let data = df
+            .filter(col("id").eq(lit(id)))?
+            .filter(col("deleted").eq(lit(true)))?;
+
+        Ok(data.count().await? > 0)
     }
 
     async fn check_table(&self, name: &str, path: &str) -> Result<(), anyhow::Error> {
@@ -307,7 +370,15 @@ impl StorageManager {
                 .with_schema(schema);
             let provider = Arc::new(ListingTable::try_new(config)?);
 
+            warn!("{:?}", provider.table_paths());
+
             self.df_ctx.register_table(name, provider)?;
+
+            /*self.df_ctx.register_json(
+                "forms",
+                "data/forms/forms.jsonl",
+                NdJsonReadOptions::default(),
+            ).await?;*/
         }
 
         Ok(())
@@ -329,7 +400,7 @@ impl StorageManager {
             return Ok(vec![]);
         }
 
-        self.check_table("forms", "forms/").await?;
+        self.check_table("forms", &path).await?;
 
         let df = self.df_ctx.table("forms").await?;
 
