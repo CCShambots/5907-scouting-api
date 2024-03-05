@@ -40,3 +40,4 @@ datafusion = "34.0.0"
 object_store = "0.9.0"
 kv = "0.24.0"
 futures = "0.3.30"
+sqlx = { version = "0.7.3", features = ["uuid", "sqlite"] }

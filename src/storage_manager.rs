@@ -1,6 +1,6 @@
 use std::ops::Add;
-use crate::datatypes::{Filter, Form, FormTemplate, Schedule};
-use crate::transactions::{Action, DataType, InternalMessage};
+use crate::datatypes::{DBForm, Filter, Form, FormTemplate, Schedule};
+use crate::transactions::{Action, DataType, InternalMessage, Transaction};
 use anyhow::anyhow;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::array::{Array, AsArray};
@@ -21,228 +21,210 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use chrono::Utc;
+use sqlx::{Executor, QueryBuilder, Row, Sqlite, SqlitePool};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
-#[derive(Default, Deserialize)]
+const TRANSACTION_TABLE: &str = &"transactions";
+const FORMS_TABLE: &str = &"forms";
+
 pub struct StorageManager {
-    transaction_log: TransactionLog,
     path: String,
-    #[serde(skip)]
-    df_ctx: SessionContext,
+    pool: SqlitePool,
 }
 
 impl StorageManager {
-    #[instrument(skip(self))]
-    async fn add_template_form_dir(&self, name: &str) -> Result<(), anyhow::Error> {
-        fs::create_dir(format!("{}/forms/{name}", self.path))
-            .await
-            .map_err(Into::into)
-    }
+    #[instrument(ret, skip(self, data))]
+    async fn write_blob(&self, data: impl AsRef<[u8]>) -> Result<Uuid, anyhow::Error> {
+        let id: Uuid = Uuid::new_v4();
 
-    #[instrument(skip(self), ret)]
-    pub async fn glob(&self) -> Result<Vec<String>, anyhow::Error> {
-        let paths = glob::glob(&format!("{}/**/*.*", self.get_path()))?;
+        write_non_create(format!("{}{}", self.path, id.to_string().digest()), data).await?;
 
-        Ok(
-            paths.filter_map(|p| p.ok())
-                .map(|p| p.to_string_lossy().replace("\\", "/").replace(self.get_path(), ""))
-                .collect()
-        )
+        Ok(id)
     }
 
     #[instrument(skip(self))]
-    async fn rename_template_form_dir(&self, name: &str, old: &str) -> Result<(), anyhow::Error> {
-        fs::rename(
-            format!("{}/forms/{name}", self.path),
-            format!("{}/forms/{old}", self.path),
-        )
-            .await
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip(self))]
-    async fn template_dir(&self, name: &str, old_name: Option<&str>) -> Result<(), anyhow::Error> {
-        match old_name {
-            None => self.add_template_form_dir(name).await,
-            Some(old_name) => self.rename_template_form_dir(name, old_name).await,
-        }
-    }
-
-    #[instrument(skip(self, data))]
-    pub async fn raw_edit(
-        &self,
-        name: &str,
-        old_name: &str,
-        sub_path: &str,
-        data: impl AsRef<[u8]>,
-    ) -> Result<(), anyhow::Error> {
-        info!("Edit from {sub_path}{name} to {sub_path}{old_name}");
-
-        fs::rename(
-            format!("{}{sub_path}{name}", &self.path),
-            format!("{}{sub_path}{old_name}", &self.path),
-        )
-            .await?;
-
-        write_non_create(format!("{}{sub_path}{name}", &self.path), data)
-            .await
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip(self, data))]
-    pub async fn raw_add(
-        &self,
-        name: &str,
-        sub_path: &str,
-        data: &[u8],
-    ) -> Result<(), anyhow::Error> {
-        info!("Add at {sub_path}{name}");
-
-        write_non_create(format!("{}{sub_path}{name}", &self.path), data)
-            .await
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn raw_delete(
-        &self,
-        name: &str,
-        old_name: &str,
-        sub_path: &str,
-    ) -> Result<(), anyhow::Error> {
-        info!("Delete from {sub_path}{name} to {sub_path}{old_name}");
-
-        fs::rename(
-            format!("{}{sub_path}{name}", &self.path),
-            format!("{}{sub_path}{old_name}", &self.path),
-        )
-            .await
-            .map_err(Into::into)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn raw_get(&self, name: &str, sub_path: &str) -> Result<Vec<u8>, anyhow::Error> {
-        info!("Get at {sub_path}{name}");
-
-        fs::read(format!("{}{sub_path}{name}", &self.path))
-            .await
-            .map_err(Into::into)
+    async fn read_blob(&self, id: Uuid) -> Result<Vec<u8>, anyhow::Error> {
+        fs::read(format!("{}{}", self.path, id.to_string().digest())).await.map_err(Into::into)
     }
 
     #[instrument(skip(self, form))]
-    pub async fn forms_add(&self, template: String, form: Form) -> Result<String, anyhow::Error> {
-        let pre = Uuid::new_v4().to_string();
-        let mut form = form;
-        form.id = Some(pre.clone());
-        form.timestamp = Some(Utc::now().timestamp());
-        form.deleted = Some(false);
-        form.template = Some(template.clone());
-        let ser = serde_json::to_string(&form)?.add("\n");
-        let digested = format!("{}.{}", (&pre).digest(), Uuid::new_v4().to_string().digest());
-        let template = self.templates_get(template).await?;
+    async fn write_form(&self, form: DBForm) -> Result<(), anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!("INSERT INTO {FORMS_TABLE} (blob_id, team, match_number, event_key, template)")
+        );
 
-        if !template.validate_form(&form) {
-            return Err(anyhow!("form does not follow template"));
+        query_builder.push_bind(form.blob_id);
+        query_builder.push_bind(form.team);
+        query_builder.push_bind(form.match_number);
+        query_builder.push_bind(form.event_key);
+        query_builder.push_bind(form.template);
+
+        if self.check_form_exists(form.blob_id).await? {
+            self.remove_form(form.blob_id).await?;
         }
 
-        let mut f = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(format!("{}forms/forms.jsonl", self.get_path()))
-            .await?;
+        self.pool.execute(query_builder.build()).await?;
 
-        f.write_all(ser.as_bytes()).await?;
+        Ok(())
+    }
 
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Form(template.name),
-                Action::Add,
-                digested,
-            ))
-            .await?;
+    #[instrument(skip(self))]
+    async fn check_form_exists(&self, blob_id: Uuid) -> Result<bool, anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!("SELECT COUNT(*) AS count FROM {FORMS_TABLE} WHERE blob_id = ?")
+        );
 
-        Ok(pre)
+        query_builder.push_bind(blob_id);
+
+        let count: i64 = query_builder.build()
+            .fetch_one(&self.pool).await?
+            .try_get("count")?;
+
+        Ok(count > 0)
+    }
+
+    #[instrument(skip(self))]
+    async fn remove_form(&self, blob_id: Uuid) -> Result<(), anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!("DELETE FROM {FORMS_TABLE} WHERE blob_id = ?")
+        );
+
+        query_builder.push_bind(blob_id);
+
+        self.pool.execute(query_builder.build()).await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn write_transaction(&self, transaction: Transaction) -> Result<(), anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!("INSERT INTO {TRANSACTION_TABLE} (id, data_type, action, blob_id, timestamp)")
+        );
+
+        query_builder.push_bind(transaction.id);
+        query_builder.push_bind(transaction.data_type);
+        query_builder.push_bind(transaction.action);
+        query_builder.push_bind(transaction.blob_id);
+        query_builder.push_bind(transaction.timestamp);
+
+        self.pool.execute(query_builder.build()).await?;
+
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub async fn blob_exists(&self, id: Uuid) -> Result<bool, anyhow::Error> {
+        fs::try_exists(format!("{}{}", self.path, id.to_string().digest())).await.map_err(Into::into)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn blob_deleted(&self, id: Uuid) -> Result<bool, anyhow::Error> {
+        let res: Action = sqlx::query("SELECT action FROM transactions WHERE id = ? ORDER BY timestamp DESC")
+            .bind(id)
+            .fetch_one(&self.pool).await?
+            .try_get("action")?;
+
+        Ok(matches!(res, Action::Delete))
+    }
+
+    #[instrument(skip(self))]
+    pub async fn latest_blob_from_alt_key(&self, alt_key: &str, data_type: DataType) -> Result<Uuid, anyhow::Error> {
+        let res: Uuid = sqlx::query("SELECT id FROM transactions WHERE alt_key = ? AND data_type = ? ORDER BY timestamp DESC")
+            .bind(alt_key)
+            .bind(data_type)
+            .fetch_one(&self.pool).await?
+            .try_get("id")?;
+
+        Ok(res)
     }
 
     #[instrument(skip(self, form))]
+    pub async fn forms_add(&self, template: String, form: Form) -> Result<Uuid, anyhow::Error> {
+        let blob_id = self.write_blob(serde_json::to_string(&form)?).await?;
+        let db_form = form.to_db_form(blob_id, template);
+        let transaction = Transaction::new(
+            DataType::Form,
+            Action::Add,
+            blob_id,
+            blob_id.to_string(),
+        );
+
+        self.write_form(db_form).await?;
+        self.write_transaction(transaction).await?;
+
+        Ok(blob_id)
+    }
+
+    #[instrument(skip(self))]
+    async fn check_alt_key_exists(&self, alt_key: &str, data_type: DataType) -> Result<(bool, Uuid), anyhow::Error> {
+        let blob_id = self.latest_blob_from_alt_key(&alt_key, data_type).await?;
+        Ok((self.blob_exists(blob_id).await? && !self.blob_deleted(blob_id).await?, blob_id))
+    }
+
+    #[instrument(skip(self))]
+    async fn get_blob_from_alt_key(&self, alt_key: &str, data_type: DataType) -> Result<Vec<u8>, anyhow::Error> {
+        let check_result = self.check_alt_key_exists(alt_key, data_type).await?;
+
+        if !check_result.0 {
+            return Err(anyhow!("Does not exist"));
+        }
+
+        self.read_blob(check_result.1).await
+    }
+
+    #[instrument(skip(self, form), ret)]
     pub async fn forms_edit(
         &self,
         template: String,
         form: Form,
-        id: String,
+        id: Uuid,
     ) -> Result<(), anyhow::Error> {
-        let pre = id.to_string();
-        let mut form = form;
-        form.id = Some(pre.clone());
-        form.timestamp = Some(Utc::now().timestamp());
-        form.deleted = Some(false);
-        form.template = Some(template.clone());
-        let ser = serde_json::to_string(&form)?.add("\n");
-        let mut digested = (&pre).digest();
-        digested = format!("{}.{}", digested, Uuid::new_v4().to_string().digest());
-        let template = self.templates_get(template).await?;
+        let template_blob = self.get_blob_from_alt_key(&template, DataType::Template).await?;
+        let deserialized_template: FormTemplate = serde_json::from_slice(template_blob.as_slice())?;
 
-        if !template.validate_form(&form) {
-            return Err(anyhow!("form does not follow template"));
+        if !deserialized_template.validate_form(&form) {
+            return Err(anyhow!("Form does not follow template"));
         }
 
-        let mut f = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(format!("{}forms/forms.jsonl", self.get_path()))
-            .await?;
+        let blob_id = self.write_blob(serde_json::to_string(&form)?).await?;
+        let db_form = form.to_db_form(blob_id, template);
+        let transaction = Transaction::new(
+            DataType::Form,
+            Action::Edit,
+            blob_id,
+            id.to_string(),
+        );
 
-        f.write_all(ser.as_bytes()).await?;
+        self.write_form(db_form).await?;
+        self.write_transaction(transaction).await?;
 
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Form(template.name),
-                Action::Edit,
-                digested,
-            ))
-            .await
-            .map_err(Into::into)
+        Ok(())
     }
 
     #[instrument(skip(self))]
-    pub async fn forms_delete(&self, template: String, id: String) -> Result<(), anyhow::Error> {
-        let mut dig = id.clone().digest();
-        dig = format!("{}.{}", dig, Uuid::new_v4().to_string().digest());
+    pub async fn forms_delete(&self, _: String, id: Uuid) -> Result<(), anyhow::Error> {
+        let blob_id = self.latest_blob_from_alt_key(&id.to_string(), DataType::Form).await?;
 
-        let mut form = self.forms_get(template.clone(), id).await?;
+        if self.blob_deleted(blob_id).await? {
+            return Ok(());
+        }
 
-        form.deleted = Some(true);
-        form.timestamp = Some(Utc::now().timestamp());
-        form.template = Some(template.clone());
+        let transaction = Transaction::new(
+            DataType::Form,
+            Action::Delete,
+            blob_id,
+            id.to_string(),
+        );
 
-        let ser = serde_json::to_string(&form)?.add("\n");
+        self.remove_form(blob_id).await?;
+        self.write_transaction(transaction).await?;
 
-        let mut f = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(format!("{}forms/forms.jsonl", self.get_path()))
-            .await?;
-
-        f.write_all(ser.as_bytes()).await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Form(template),
-                Action::Delete,
-                dig,
-            ))
-            .await
-            .map_err(Into::into)
+        Ok(())
     }
 
     pub fn get_path(&self) -> &str {
@@ -250,138 +232,31 @@ impl StorageManager {
     }
 
     #[instrument(skip(self))]
-    pub async fn forms_get(&self, template: String, id: String) -> Result<Form, anyhow::Error> {
-        let path = format!("{}forms/", self.path);
+    pub async fn forms_get_serialized(&self, _: String, id: String) -> Result<Vec<u8>, anyhow::Error> {
+        let blob_id = self.latest_blob_from_alt_key(&id, DataType::Form).await?;
 
-        fs::metadata(&path).await?;
-
-        if std::fs::read_dir(&path)?.count() < 1 {
-            return Err(anyhow!("no forms"));
+        if !self.blob_exists(blob_id).await? || self.blob_deleted(blob_id).await? {
+            return Err(anyhow!("Form does not exist"));
         }
 
-        self.check_table("forms", &path).await?;
-
-        let df = self.df_ctx.table("forms").await?;
-
-        let df_filter = col("fields").is_not_null()
-            .and(col("template").eq(lit(template)))
-            .and(col("id").eq(lit(id)));
-
-        let data = df
-            .filter(df_filter)?
-            .sort(vec![col("timestamp").sort(false, true)])?
-            .limit(0, Some(1))?
-            .filter(col("deleted").eq(lit(false)))?;
-
-        let res = data.collect().await?;
-
-        let res: Vec<&RecordBatch> = res.iter().collect();
-
-        if res.is_empty() {
-            return Err(anyhow!("form does not exist"));
-        }
-
-        let res = record_batches_to_json_rows(&res[..])?;
-        let ser = serde_json::to_string(&res[0])?;
-
-        serde_json::from_str(&ser).map_err(Into::into)
+        self.read_blob(blob_id).await
     }
 
     #[instrument(skip(self))]
-    pub async fn forms_list(&self, template: String) -> Result<Vec<String>, anyhow::Error> {
-        let path = format!("{}forms/", self.path);
+    pub async fn forms_list(&self, template: String) -> Result<Vec<Uuid>, anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!("SELECT blob_id FROM {FORMS_TABLE} WHERE template = ?")
+        );
 
-        fs::metadata(&path).await?;
+        query_builder.push_bind(template);
 
-        if std::fs::read_dir(&path)?.count() < 1 {
-            return Err(anyhow!("no forms"));
-        }
-
-        self.check_table("forms", &path).await?;
-
-        let mut df = self.df_ctx.table("forms").await?;
-        df = df.cache().await?;
-
-        let data = df.clone()
-            .filter(col("template").eq(lit(template)))?
-            .select(vec![col("id")])?
-            .distinct()?;
-
-        let res = data.collect().await?;
-
-        let res: Vec<&RecordBatch> = res.iter().collect();
-
-        let res = record_batches_to_json_rows(&res[..])?;
-        let ser = serde_json::to_string(&res)?;
-
-        let val = Value::from_str(&ser)?;
-
-        let mut ids: Vec<String> = val
-            .as_array()
-            .unwrap()
+        let blob_ids: Vec<Uuid> = query_builder.build()
+            .fetch_all(&self.pool).await?
             .iter()
-            .map(|v| v.get("id").unwrap().as_str().unwrap().to_string())
+            .filter_map(|row| row.try_get("blob_id").ok())
             .collect();
 
-        let mut i: i32 = 0;
-
-        while (i as usize) < ids.len() {
-            let id = &ids[i as usize];
-
-            if self.form_deleted(id, df.clone()).await? {
-                ids.remove(i as usize);
-                i -= 1;
-            }
-
-            i += 1;
-        }
-
-        Ok(ids)
-    }
-
-    async fn form_deleted(&self, id: &str, df: DataFrame) -> Result<bool, anyhow::Error> {
-        let path = format!("{}forms/", self.path);
-
-        fs::metadata(&path).await?;
-
-        if std::fs::read_dir(&path)?.count() < 1 {
-            return Err(anyhow!("no forms"));
-        }
-
-        self.check_table("forms", &path).await?;
-
-        let data = df
-            .filter(col("id").eq(lit(id)))?
-            .filter(col("deleted").eq(lit(true)))?;
-
-        Ok(data.count().await? > 0)
-    }
-
-    async fn check_table(&self, name: &str, path: &str) -> Result<(), anyhow::Error> {
-        if !self.df_ctx.table_exist(name)? {
-            let path = ListingTableUrl::parse(path)?;
-            let state = self.df_ctx.state();
-            let file_format = JsonFormat::default();
-            let listing_options =
-                ListingOptions::new(Arc::new(file_format));
-            let schema = listing_options.infer_schema(&state, &path).await?;
-            let config = ListingTableConfig::new(path)
-                .with_listing_options(listing_options)
-                .with_schema(schema);
-            let provider = Arc::new(ListingTable::try_new(config)?);
-
-            warn!("{:?}", provider.table_paths());
-
-            self.df_ctx.register_table(name, provider)?;
-
-            /*self.df_ctx.register_json(
-                "forms",
-                "data/forms/forms.jsonl",
-                NdJsonReadOptions::default(),
-            ).await?;*/
-        }
-
-        Ok(())
+        Ok(blob_ids)
     }
 
     #[instrument(skip(self))]
@@ -390,46 +265,31 @@ impl StorageManager {
         template: String,
         filter: Filter,
     ) -> Result<Vec<Form>, anyhow::Error> {
-        let path = format!("{}forms/", self.path);
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!("SELECT blob_id FROM {FORMS_TABLE} WHERE template = ?")
+        );
 
-        if fs::metadata(&path).await.is_err() {
-            return Ok(vec![]);
+        if let Some(team) = filter.team {
+            query_builder.push(" AND team = ?");
+            query_builder.push_bind(team);
         }
 
-        if std::fs::read_dir(&path)?.count() < 1 {
-            return Ok(vec![]);
+        if let Some(scouter) = filter.scouter {
+            query_builder.push(" AND scouter = ?");
+            query_builder.push_bind(scouter);
         }
 
-        self.check_table("forms", &path).await?;
-
-        let df = self.df_ctx.table("forms").await?;
-
-        let mut df_filter = col("fields").is_not_null();
-
-        df_filter = df_filter
-            .and(col("template").eq(lit(template)))
-            .and(col("deleted").eq(lit(false)));
-
-        if let Some(f) = filter.event {
-            df_filter = df_filter.and(col("event_key").eq(lit(f)));
-        }
-        if let Some(f) = filter.scouter {
-            df_filter = df_filter.and(col("scouter").eq(lit(f)));
-        }
-        if let Some(f) = filter.match_number {
-            df_filter = df_filter.and(col("match_number").eq(lit(f)));
-        }
-        if let Some(f) = filter.team {
-            df_filter = df_filter.and(col("team").eq(lit(f)));
+        if let Some(event) = filter.event {
+            query_builder.push(" AND event = ?");
+            query_builder.push_bind(event);
         }
 
-        let res = df.filter(df_filter)?.collect().await?;
+        if let Some(match_number) = filter.match_number {
+            query_builder.push(" AND match_number = ?");
+            query_builder.push_bind(match_number);
+        }
 
-        let res: Vec<&RecordBatch> = res.iter().collect();
-        let res = record_batches_to_json_rows(res.as_slice())?;
-        let ser = serde_json::to_string(&res)?;
-
-        serde_json::from_str(&ser).map_err(Into::into)
+        todo!()
     }
 
     #[instrument(skip(self, schedule))]
@@ -763,78 +623,6 @@ impl StorageManager {
 
     pub async fn get_file(&self, path: String) -> Result<Vec<u8>, anyhow::Error> {
         self.transaction_log.get_file(path).await
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct TransactionLog {
-    path: String,
-}
-
-impl TransactionLog {
-    #[instrument]
-    async fn log_transaction(&self, transaction: InternalMessage) -> Result<(), anyhow::Error> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .append(true)
-            .create(true)
-            .open(&self.path)
-            .await?;
-
-        file.write_all(format!("{}\n", serde_json::to_string(&transaction)?).as_bytes())
-            .await
-            .map_err(Into::into)
-    }
-
-    #[instrument]
-    pub async fn get_first(&self) -> Result<InternalMessage, anyhow::Error> {
-        let file = File::open(&self.path).await?;
-        let mut line: String = String::new();
-
-        BufReader::new(file).read_line(&mut line).await?;
-
-        Ok(serde_json::from_str(&line)?)
-    }
-
-    #[instrument]
-    pub async fn get_after(&self, id: Uuid) -> Result<InternalMessage, anyhow::Error> {
-        let file = File::open(&self.path).await?;
-        let mut lines = BufReader::new(file).lines();
-
-        while let Some(line) = lines.next_line().await? {
-            let de = serde_json::from_str::<InternalMessage>(&line)?;
-
-            if de.id == id {
-                let line = lines.next_line().await?;
-
-                return match line {
-                    None => Err(anyhow!("explode")),
-                    Some(line) => Ok(serde_json::from_str::<InternalMessage>(&line)?),
-                };
-            }
-        }
-
-        Err(anyhow!("dfasdfjkh"))
-    }
-
-    #[instrument]
-    pub async fn get_file(&self, path: String) -> Result<Vec<u8>, anyhow::Error> {
-        let mut buf = vec![];
-
-        File::open(path).await?.read_to_end(&mut buf).await?;
-        Ok(buf)
-    }
-
-    #[instrument]
-    pub async fn list_files(&self) -> Result<Vec<String>, anyhow::Error> {
-        let glob = glob("data/*")
-            .unwrap()
-            .filter_map(|p| p.ok())
-            .filter(|p| p.is_file())
-            .map(|p| p.as_path().to_string_lossy().to_string())
-            .collect();
-
-        Ok(glob)
     }
 }
 
