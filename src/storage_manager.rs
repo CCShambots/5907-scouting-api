@@ -343,40 +343,44 @@ impl StorageManager {
     }
 
     #[instrument(skip(self, storable))]
-    pub async fn storable_add(&self, storable: impl StorableObject + Serialize) -> Result<String, anyhow::Error> {
+    pub async fn storable_add(&self, storable: impl StorableObject) -> Result<String, anyhow::Error> {
         let check_res = self.get_blob_id(&storable.get_alt_key(), storable.get_type()).await?;
+        let alt_key = storable.get_alt_key();
+        let data_type = storable.get_type();
 
         if check_res.is_some() {
             return Err(anyhow!("Object exists already"));
         }
 
-        let blob_id = self.write_blob(serde_json::to_string(&storable)?).await?;
+        let blob_id = self.write_blob(storable.ser()?).await?;
         let transaction = Transaction::new(
-            storable.get_type(),
+            data_type,
             Action::Add,
             blob_id,
-            storable.get_alt_key(),
+            alt_key.clone(),
         );
 
         self.write_transaction(transaction).await?;
 
-        Ok(storable.get_alt_key())
+        Ok(alt_key)
     }
 
     #[instrument(skip(self, storable))]
-    pub async fn storable_edit(&self, storable: impl StorableObject + Serialize) -> Result<(), anyhow::Error> {
+    pub async fn storable_edit(&self, storable: impl StorableObject) -> Result<(), anyhow::Error> {
         let check_res = self.get_blob_id(&storable.get_alt_key(), storable.get_type()).await?;
+        let alt_key = storable.get_alt_key();
+        let data_type = storable.get_type();
 
         if check_res.is_none() {
             return Err(anyhow!("Object does not exist"));
         }
 
-        let blob_id = self.write_blob(serde_json::to_string(&storable)?).await?;
+        let blob_id = self.write_blob(storable.ser()?).await?;
         let transaction = Transaction::new(
-            storable.get_type(),
+            data_type,
             Action::Edit,
             blob_id,
-            storable.get_alt_key(),
+            alt_key.clone(),
         );
 
         self.write_transaction(transaction).await?;

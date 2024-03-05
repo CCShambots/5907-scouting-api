@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha256::Sha256Digest;
 use std::collections::HashMap;
 use std::ops::Add;
+use anyhow::Error;
 use sqlx::FromRow;
 use uuid::Uuid;
 use crate::transactions::DataType;
@@ -106,6 +107,7 @@ pub struct Form {
 pub trait StorableObject {
     fn get_alt_key(&self) -> String;
     fn get_type(&self) -> DataType;
+    fn ser(self) -> Result<Vec<u8>, anyhow::Error>;
 }
 
 impl Form {
@@ -137,7 +139,7 @@ pub struct Filter {
     pub scouter: Option<String>,
 }
 
-pub struct BytesReference(String, Vec<u8>);
+pub struct BytesReference(pub String, pub Vec<u8>);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldData {
@@ -170,6 +172,10 @@ impl StorableObject for Form {
     fn get_type(&self) -> DataType {
         DataType::Form
     }
+
+    fn ser(self) -> Result<Vec<u8>, anyhow::Error> {
+        serde_json::to_vec(&self).map_err(Into::into)
+    }
 }
 
 impl StorableObject for FormTemplate {
@@ -179,6 +185,10 @@ impl StorableObject for FormTemplate {
 
     fn get_type(&self) -> DataType {
         DataType::Template
+    }
+
+    fn ser(self) -> Result<Vec<u8>, anyhow::Error> {
+        serde_json::to_vec(&self).map_err(Into::into)
     }
 }
 
@@ -190,6 +200,10 @@ impl StorableObject for Schedule {
     fn get_type(&self) -> DataType {
         DataType::Schedule
     }
+
+    fn ser(self) -> Result<Vec<u8>, anyhow::Error> {
+        serde_json::to_vec(&self).map_err(Into::into)
+    }
 }
 
 impl StorableObject for BytesReference {
@@ -199,5 +213,9 @@ impl StorableObject for BytesReference {
 
     fn get_type(&self) -> DataType {
         DataType::Bytes
+    }
+
+    fn ser(self) -> Result<Vec<u8>, Error> {
+        Ok(self.1)
     }
 }

@@ -7,6 +7,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Extension;
 use std::sync::Arc;
 use tracing::{info, instrument};
+use crate::datatypes::BytesReference;
+use crate::transactions::DataType;
 
 #[instrument(skip(storage_manager, parts))]
 pub async fn store_bytes(
@@ -14,11 +16,7 @@ pub async fn store_bytes(
     storage_manager: Extension<Arc<StorageManager>>,
     parts: Bytes,
 ) -> StoreBytesResponse {
-    let blob_id = blob_id.clone();
-
-    let id = sha256::digest(&blob_id);
-
-    match storage_manager.bytes_add(id, blob_id, parts.as_ref()).await {
+    match storage_manager.storable_add(BytesReference(blob_id, parts.to_vec())).await {
         Ok(_) => StoreBytesResponse::OK,
         Err(_) => StoreBytesResponse::FailedToWriteBlob,
     }
@@ -29,11 +27,7 @@ pub async fn get_bytes(
     Path(blob_id): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> StoreBytesResponse {
-    let blob_id = blob_id.clone();
-
-    let blob_id = sha256::digest(blob_id);
-
-    match storage_manager.bytes_get(blob_id).await {
+    match storage_manager.storable_get_serialized(blob_id, DataType::Bytes).await {
         Ok(bytes) => StoreBytesResponse::Data(bytes),
         Err(_) => StoreBytesResponse::NotFound,
     }
@@ -48,7 +42,7 @@ pub async fn delete_bytes(
 
     let blob_id = sha256::digest(blob_id);
 
-    let _ = storage_manager.bytes_delete(blob_id).await;
+    let _ = storage_manager.storable_delete(&blob_id, DataType::Bytes).await;
 
     StoreBytesResponse::DeleteSuccess
 }
@@ -59,12 +53,8 @@ pub async fn edit_bytes(
     storage_manager: Extension<Arc<StorageManager>>,
     parts: Bytes,
 ) -> StoreBytesResponse {
-    let blob_id = blob_id.clone();
-
-    let id = sha256::digest(&blob_id);
-
     match storage_manager
-        .bytes_edit(id, blob_id, parts.as_ref())
+        .storable_edit(BytesReference(blob_id, parts.to_vec()))
         .await
     {
         Ok(_) => StoreBytesResponse::OK,
@@ -74,7 +64,7 @@ pub async fn edit_bytes(
 
 #[instrument(skip(storage_manager))]
 pub async fn list_bytes(storage_manager: Extension<Arc<StorageManager>>) -> StoreBytesResponse {
-    match storage_manager.bytes_list().await {
+    match storage_manager.storable_list(DataType::Bytes).await {
         Ok(list) => StoreBytesResponse::List(serde_json::to_string(&list).unwrap()),
         Err(_) => StoreBytesResponse::FailedToReadBlobs,
     }
