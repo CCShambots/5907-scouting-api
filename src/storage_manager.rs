@@ -22,6 +22,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use chrono::Utc;
 use sqlx::{Executor, QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::sqlite::SqlitePoolOptions;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
@@ -37,6 +38,13 @@ pub struct StorageManager {
 }
 
 impl StorageManager {
+    async fn new(&self, base_path: &str) -> Self {
+        Self {
+            path: format!("{base_path}blobs/"),
+            pool: SqlitePoolOptions::new().connect(&format!("sqlite://{base_path}database.db")).await.unwrap(),
+        }
+    }
+
     #[instrument(ret, skip(self, data))]
     async fn write_blob(&self, data: impl AsRef<[u8]>) -> Result<Uuid, anyhow::Error> {
         let id: Uuid = Uuid::new_v4();
