@@ -22,7 +22,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use chrono::Utc;
 use futures::StreamExt;
-use sqlx::{Executor, QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{Executor, query, QueryBuilder, Row, Sqlite, SqlitePool};
 use sqlx::sqlite::SqlitePoolOptions;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -202,7 +202,7 @@ impl StorageManager {
         &self,
         template: String,
         form: Form,
-        id: Uuid,
+        id: String,
     ) -> Result<(), anyhow::Error> {
         let template_blob = self.get_blob_from_alt_key(&template, DataType::Template).await?;
         let deserialized_template: FormTemplate = serde_json::from_slice(template_blob.as_slice())?;
@@ -211,13 +211,17 @@ impl StorageManager {
             return Err(anyhow!("Form does not follow template"));
         }
 
+        if self.get_blob_id(&id, DataType::Form).await?.is_none() {
+            return Err(anyhow!("Form does not exist"));
+        }
+
         let blob_id = self.write_blob(serde_json::to_string(&form)?).await?;
         let db_form = form.to_db_form(blob_id, template);
         let transaction = Transaction::new(
             DataType::Form,
             Action::Edit,
             blob_id,
-            id.to_string(),
+            id,
         );
 
         self.write_form(db_form).await?;
@@ -227,18 +231,22 @@ impl StorageManager {
     }
 
     #[instrument(skip(self))]
-    pub async fn forms_delete(&self, _: String, id: Uuid) -> Result<(), anyhow::Error> {
+    pub async fn forms_delete(&self, _: String, id: String) -> Result<(), anyhow::Error> {
         let blob_id = self.latest_blob_from_alt_key(&id.to_string(), DataType::Form).await?;
 
         if self.blob_deleted(blob_id).await? {
             return Ok(());
         }
 
+        if self.get_blob_id(&id, DataType::Form).await?.is_none() {
+            return Err(anyhow!("Form does not exist"));
+        }
+
         let transaction = Transaction::new(
             DataType::Form,
             Action::Delete,
             blob_id,
-            id.to_string(),
+            id,
         );
 
         self.remove_form(blob_id).await?;
@@ -421,6 +429,28 @@ impl StorageManager {
             .collect();
 
         Ok(out)
+    }
+
+    pub async fn storable_get_serialized(&self, key: String, data_type: DataType) -> Result<Vec<u8>, anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!(
+                "SELECT blob_id, MAX(timestamp)\
+                FROM {TRANSACTION_TABLE}\
+                WHERE data_type = ? AND key = ?\
+                GROUP BY alt_key"
+            )
+        );
+
+        query_builder.push_bind(data_type);
+        query_builder.push_bind(key);
+
+        let blob_id: Uuid = query_builder
+            .build()
+            .fetch_one(&self.pool)
+            .await?
+            .try_get("blob_id")?;
+
+        self.read_blob(blob_id).await
     }
 }
 

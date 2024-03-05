@@ -8,6 +8,7 @@ use axum::{Extension, Json};
 use datafusion::arrow::compute::filter;
 use std::sync::Arc;
 use tracing::{info, instrument};
+use uuid::Uuid;
 
 #[instrument(skip(form, storage_manager))]
 pub async fn add_form(
@@ -24,7 +25,7 @@ pub async fn add_form(
 #[instrument(skip(storage_manager))]
 pub async fn list_forms(
     Path(template): Path<String>,
-    storage_manager: Extension<Arc<StorageManager>>
+    storage_manager: Extension<Arc<StorageManager>>,
 ) -> FormsResponse {
     match storage_manager.forms_list(template).await {
         Ok(l) => FormsResponse::IDList(l),
@@ -37,8 +38,8 @@ pub async fn get_form(
     Path((template, name)): Path<(String, String)>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> FormsResponse {
-    match storage_manager.forms_get(template, name).await {
-        Ok(t) => FormsResponse::Form(t),
+    match storage_manager.forms_get_serialized(template, name).await {
+        Ok(t) => FormsResponse::SerializedForm(t),
         Err(_) => FormsResponse::FailedToRead,
     }
 }
@@ -83,9 +84,9 @@ pub async fn delete_form(
 #[derive(Debug)]
 pub enum FormsResponse {
     OK,
-    ID(String),
-    IDList(Vec<String>),
-    Form(Form),
+    ID(Uuid),
+    IDList(Vec<Uuid>),
+    SerializedForm(Vec<u8>),
     Filtered(Vec<Form>),
     FailedToAdd,
     FailedToEdit,
@@ -97,14 +98,14 @@ impl IntoResponse for FormsResponse {
     fn into_response(self) -> Response {
         match self {
             FormsResponse::OK => StatusCode::OK.into_response(),
-            FormsResponse::Form(t) => (StatusCode::OK, Json(t)).into_response(),
             FormsResponse::FailedToAdd => StatusCode::BAD_REQUEST.into_response(),
             FormsResponse::FailedToEdit => StatusCode::BAD_REQUEST.into_response(),
             FormsResponse::FailedToDelete => StatusCode::BAD_REQUEST.into_response(),
             FormsResponse::FailedToRead => StatusCode::BAD_REQUEST.into_response(),
             FormsResponse::Filtered(l) => (StatusCode::OK, Json(l)).into_response(),
             FormsResponse::ID(id) => (StatusCode::OK, Json(id)).into_response(),
-            FormsResponse::IDList(ids) => (StatusCode::OK, Json(ids)).into_response()
+            FormsResponse::IDList(ids) => (StatusCode::OK, Json(ids)).into_response(),
+            FormsResponse::SerializedForm(ser) => (StatusCode::OK, String::from_utf8(ser).unwrap()).into_response()
         }
     }
 }
