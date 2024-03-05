@@ -30,8 +30,8 @@ use tokio::{fs, io};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
-const TRANSACTION_TABLE: &str = &"transactions";
-const FORMS_TABLE: &str = &"forms";
+pub const TRANSACTION_TABLE: &str = &"transactions";
+pub const FORMS_TABLE: &str = &"forms";
 
 pub struct StorageManager {
     path: String,

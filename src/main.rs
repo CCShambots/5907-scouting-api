@@ -15,6 +15,8 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use opentelemetry_sdk::{trace, Resource};
 use std::sync::Arc;
 use std::time::Duration;
+use sqlx::migrate::MigrateDatabase;
+use sqlx::{Connection, Executor, Sqlite, SqliteConnection};
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -71,6 +73,38 @@ struct TlsConfig {
     application_bind: String,
 }
 
+async fn init_sqlite(path: &str) -> Result<(), anyhow::Error> {
+    let formatted_path = format!("sqlite://{path}database.db");
+
+    if !Sqlite::database_exists(&formatted_path).await? {
+        Sqlite::create_database(&formatted_path).await?;
+    }
+
+    let mut conn = SqliteConnection::connect(&formatted_path).await?;
+
+    if sqlx::query(&format!("SELECT COUNT(*) FROM {}", storage_manager::TRANSACTION_TABLE)).execute(&mut conn).await.is_err() {
+        sqlx::query(&format!(
+            "CREATE TABLE {} (\
+            id TEXT NOT NULL,\
+            data_type TEXT NOT NULL,\
+            action TEXT NOT NULL,\
+            blob_id TEXT NOT NULL,\
+            alt_key TEXT NOT NULL,\
+            timestamp INTEGER NOT NULL\
+            )",
+            storage_manager::TRANSACTION_TABLE))
+            .execute(&mut conn).await?;
+
+        sqlx::query(&format!(
+            "CREATE INDEX idx_timestamp\
+            ON {} (timestamp DESC)",
+            storage_manager::TRANSACTION_TABLE))
+            .execute(&mut conn).await?;
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     let settings = config::Config::builder()
@@ -80,7 +114,7 @@ async fn main() {
 
     let tls_config = settings.get::<TlsConfig>("tls_config").unwrap();
 
-    let storage_manager = settings.get::<StorageManager>("storage_manager").unwrap();
+    let path: String = settings.get("path").unwrap();
 
     let google_authenticator = settings
         .get::<GoogleAuthenticator>("authenticator")
@@ -192,7 +226,6 @@ async fn main() {
             axum::routing::post(forms::add_form),
         )
         .layer(from_extractor::<GoogleUser>())
-        .layer(from_extractor::<ItemPath>())
         .route("/", axum::routing::get(auth::login_handler))
         .route(
             "/auth/:code/:email",
