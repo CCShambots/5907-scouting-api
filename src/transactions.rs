@@ -3,17 +3,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Encode, FromRow, Type};
 use uuid::Uuid;
 
-impl InternalMessage {
-    pub fn new(data_type: DataType, action: Action, new_path: String) -> Self {
-        Self {
-            data_type,
-            action,
-            new_path,
-            id: Uuid::new_v4(),
-        }
-    }
-}
-
 impl Transaction {
     pub fn new(data_type: DataType, action: Action, blob_id: Uuid, alt_key: String) -> Self {
         Self {
@@ -24,6 +13,10 @@ impl Transaction {
             timestamp: Utc::now().timestamp_micros(),
             alt_key,
         }
+    }
+
+    pub fn describe(&self) -> String {
+        format!("[{:?}] of [{:?}] object with key [{}]", self.action, self.data_type, self.alt_key)
     }
 }
 
@@ -37,15 +30,7 @@ pub struct Transaction {
     pub timestamp: i64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct InternalMessage {
-    pub id: Uuid,
-    pub data_type: DataType,
-    pub action: Action,
-    pub new_path: String,
-}
-
-#[derive(Serialize, Deserialize, Debug, Type)]
+#[derive(Serialize, Deserialize, Debug, Type, Copy, Clone)]
 pub enum DataType {
     Bytes,
     Form,
@@ -53,7 +38,7 @@ pub enum DataType {
     Template,
 }
 
-#[derive(Serialize, Deserialize, Debug, Type)]
+#[derive(Serialize, Deserialize, Debug, Type, Copy, Clone)]
 pub enum Action {
     Add,
     Delete,

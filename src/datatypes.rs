@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::ops::Add;
 use sqlx::FromRow;
 use uuid::Uuid;
+use crate::transactions::DataType;
 
 impl FormTemplate {
     pub fn new(name: &str, year: i64) -> Self {
@@ -99,6 +100,12 @@ pub struct Form {
     pub team: i64,
     pub match_number: i64,
     pub event_key: String,
+    pub id: Option<Uuid>,
+}
+
+pub trait StorableObject {
+    fn get_alt_key(&self) -> String;
+    fn get_type(&self) -> DataType;
 }
 
 impl Form {
@@ -130,6 +137,8 @@ pub struct Filter {
     pub scouter: Option<String>,
 }
 
+pub struct BytesReference(String, Vec<u8>);
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldData {
     CheckBox(bool),
@@ -151,4 +160,44 @@ pub struct Shift {
     pub station: u8,
     pub match_start: u32,
     pub match_end: u32,
+}
+
+impl StorableObject for Form {
+    fn get_alt_key(&self) -> String {
+        self.id.unwrap().to_string()
+    }
+
+    fn get_type(&self) -> DataType {
+        DataType::Form
+    }
+}
+
+impl StorableObject for FormTemplate {
+    fn get_alt_key(&self) -> String {
+        self.name.clone()
+    }
+
+    fn get_type(&self) -> DataType {
+        DataType::Template
+    }
+}
+
+impl StorableObject for Schedule {
+    fn get_alt_key(&self) -> String {
+        self.event.clone()
+    }
+
+    fn get_type(&self) -> DataType {
+        DataType::Schedule
+    }
+}
+
+impl StorableObject for BytesReference {
+    fn get_alt_key(&self) -> String {
+        self.0.clone()
+    }
+
+    fn get_type(&self) -> DataType {
+        DataType::Bytes
+    }
 }

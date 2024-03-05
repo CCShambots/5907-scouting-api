@@ -1,7 +1,7 @@
 use std::ops::Add;
-use crate::datatypes::{DBForm, Filter, Form, FormTemplate, Schedule};
-use crate::transactions::{Action, DataType, InternalMessage, Transaction};
-use anyhow::anyhow;
+use crate::datatypes::{DBForm, Filter, Form, FormTemplate, Schedule, StorableObject};
+use crate::transactions::{Action, DataType, Transaction};
+use anyhow::{anyhow, Error};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::array::{Array, AsArray};
 use datafusion::arrow::datatypes;
@@ -14,13 +14,14 @@ use datafusion::datasource::listing::{
 };
 use datafusion::prelude::{col, DataFrame, lit, max, NdJsonReadOptions, SessionContext};
 use glob::glob;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha256::Sha256Digest;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use chrono::Utc;
+use futures::StreamExt;
 use sqlx::{Executor, QueryBuilder, Row, Sqlite, SqlitePool};
 use sqlx::sqlite::SqlitePoolOptions;
 use tokio::fs::{File, OpenOptions};
@@ -108,11 +109,13 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, transaction))]
     async fn write_transaction(&self, transaction: Transaction) -> Result<(), anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
             format!("INSERT INTO {TRANSACTION_TABLE} (id, data_type, action, blob_id, timestamp)")
         );
+
+        let desc = transaction.describe();
 
         query_builder.push_bind(transaction.id);
         query_builder.push_bind(transaction.data_type);
@@ -121,6 +124,8 @@ impl StorageManager {
         query_builder.push_bind(transaction.timestamp);
 
         self.pool.execute(query_builder.build()).await?;
+
+        info!("{}", desc);
 
         Ok(())
     }
@@ -169,20 +174,27 @@ impl StorageManager {
     }
 
     #[instrument(skip(self))]
-    async fn check_alt_key_exists(&self, alt_key: &str, data_type: DataType) -> Result<(bool, Uuid), anyhow::Error> {
-        let blob_id = self.latest_blob_from_alt_key(&alt_key, data_type).await?;
-        Ok((self.blob_exists(blob_id).await? && !self.blob_deleted(blob_id).await?, blob_id))
+    async fn get_blob_id(&self, alt_key: &str, data_type: DataType) -> Result<Option<Uuid>, anyhow::Error> {
+        let blob_id = self.latest_blob_from_alt_key(&alt_key, data_type).await;
+
+        match blob_id {
+            Ok(id) => {
+                if self.blob_exists(id).await? && !self.blob_deleted(id).await? {
+                    Ok(Some(id))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(_) => {
+                Ok(None)
+            }
+        }
     }
 
     #[instrument(skip(self))]
     async fn get_blob_from_alt_key(&self, alt_key: &str, data_type: DataType) -> Result<Vec<u8>, anyhow::Error> {
-        let check_result = self.check_alt_key_exists(alt_key, data_type).await?;
-
-        if !check_result.0 {
-            return Err(anyhow!("Does not exist"));
-        }
-
-        self.read_blob(check_result.1).await
+        self.read_blob(self.get_blob_id(alt_key, data_type).await?
+            .ok_or(anyhow!("blob was deleted"))?).await
     }
 
     #[instrument(skip(self, form), ret)]
@@ -253,18 +265,22 @@ impl StorageManager {
     #[instrument(skip(self))]
     pub async fn forms_list(&self, template: String) -> Result<Vec<Uuid>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
-            format!("SELECT blob_id FROM {FORMS_TABLE} WHERE template = ?")
+            format!(
+                "SELECT alt_key FROM {TRANSACTION_TABLE} \
+                INNER JOIN {FORMS_TABLE} ON {TRANSACTION_TABLE}.blob_id = {FORMS_TABLE}.blob_id \
+                WHERE template = ? AND deleted = false"
+            )
         );
 
         query_builder.push_bind(template);
 
-        let blob_ids: Vec<Uuid> = query_builder.build()
+        let ids: Vec<Uuid> = query_builder.build()
             .fetch_all(&self.pool).await?
             .iter()
-            .filter_map(|row| row.try_get("blob_id").ok())
+            .filter_map(|row| row.try_get("alt_key").ok())
             .collect();
 
-        Ok(blob_ids)
+        Ok(ids)
     }
 
     #[instrument(skip(self))]
@@ -276,6 +292,8 @@ impl StorageManager {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
             format!("SELECT blob_id FROM {FORMS_TABLE} WHERE template = ?")
         );
+
+        query_builder.push_bind(template);
 
         if let Some(team) = filter.team {
             query_builder.push(" AND team = ?");
@@ -297,340 +315,112 @@ impl StorageManager {
             query_builder.push_bind(match_number);
         }
 
-        todo!()
-    }
-
-    #[instrument(skip(self, schedule))]
-    pub async fn schedules_add(&self, schedule: Schedule) -> Result<(), anyhow::Error> {
-        let digested_name = (&schedule.event).digest();
-        let digested_name = format!("{}.current", digested_name);
-
-        self.raw_add(
-            &digested_name,
-            "schedules/",
-            serde_json::to_string(&schedule)?.as_bytes(),
-        )
-            .await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Schedule,
-                Action::Add,
-                digested_name,
-            ))
-            .await
-    }
-
-    #[instrument(skip(self, schedule))]
-    pub async fn schedules_edit(&self, schedule: Schedule) -> Result<(), anyhow::Error> {
-        let digested_name = (&schedule.event).digest();
-        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
-        let digested_name = format!("{}.current", digested_name);
-
-        self.raw_edit(
-            &digested_name,
-            &old,
-            "schedules/",
-            serde_json::to_string(&schedule)?.as_bytes(),
-        )
-            .await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(DataType::Schedule, Action::Edit, old))
-            .await
-    }
-
-    #[instrument(skip(self))]
-    pub async fn schedules_delete(&self, name: String) -> Result<(), anyhow::Error> {
-        let digested_name = (&name).digest();
-        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
-        let digested_name = format!("{}.current", digested_name);
-
-        self.raw_delete(&digested_name, &old, "schedules/").await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Schedule,
-                Action::Delete,
-                old,
-            ))
-            .await
-    }
-
-    #[instrument(skip(self))]
-    pub async fn schedules_get(&self, name: String) -> Result<Schedule, anyhow::Error> {
-        let digested_name = (&name).digest();
-        let digested_name = format!("{}.current", digested_name);
-
-        let bytes = self.raw_get(&digested_name, "schedules/").await?;
-
-        serde_json::from_slice(bytes.as_slice()).map_err(Into::into)
-    }
-
-    #[instrument(skip(self))]
-    pub async fn schedules_list(&self) -> Result<Vec<String>, anyhow::Error> {
-        if !self.df_ctx.table_exist("schedules")? {
-            let path = ListingTableUrl::parse(format!("{}schedules", self.path))?;
-            let file_format = JsonFormat::default();
-            let listing_options =
-                ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
-            let schema = SchemaRef::new(Schema::new(vec![Field::new(
-                "event",
-                datafusion::arrow::datatypes::DataType::Utf8,
-                false,
-            )]));
-            let config = ListingTableConfig::new(path)
-                .with_listing_options(listing_options)
-                .with_schema(schema);
-            let provider = Arc::new(ListingTable::try_new(config)?);
-
-            self.df_ctx.register_table("schedules", provider)?;
-        }
-
-        let df = self.df_ctx.table("schedules").await?;
-        let res = df.select(vec![col("event")])?.collect().await?;
-
-        let res: Vec<&RecordBatch> = res.iter().collect();
-
-        let res = record_batches_to_json_rows(res.as_slice())?;
-
-        let res = res
+        let res_ids: Vec<Uuid> = query_builder
+            .build()
+            .fetch_all(&self.pool).await?
             .iter()
-            .filter_map(|m| m.get("event"))
-            .filter_map(|thing| match thing {
-                Value::String(s) => Some(s.clone()),
-                _ => None,
-            })
+            .filter_map(|r| r.try_get("blob_id").ok())
             .collect();
 
-        Ok(res)
-    }
+        let mut res_forms: Vec<Form> = Vec::new();
 
-    #[instrument(skip(self, template))]
-    pub async fn templates_add(&self, template: FormTemplate) -> Result<(), anyhow::Error> {
-        let digested_name = (&template.name).digest();
-        let digested_name = format!("{}.current", digested_name);
+        for id in res_ids {
+            let ser = self.read_blob(id).await?;
+            let de = serde_json::from_slice(ser.as_slice())?;
 
-        self.raw_add(
-            &digested_name,
-            "templates/",
-            serde_json::to_string(&template)?.as_bytes(),
-        )
-            .await?;
-
-        self.template_dir(&digested_name, None).await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Template,
-                Action::Add,
-                digested_name,
-            ))
-            .await
-    }
-
-    #[instrument(skip(self, template))]
-    pub async fn templates_edit(&self, template: FormTemplate) -> Result<(), anyhow::Error> {
-        let digested_name = (&template.name).digest();
-        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
-        let digested_name = format!("{}.current", digested_name);
-
-        self.raw_edit(
-            &digested_name,
-            &old,
-            "templates/",
-            serde_json::to_string(&template)?.as_bytes(),
-        )
-            .await?;
-
-        self.template_dir(&digested_name, Some(&old)).await?;
-        self.template_dir(&digested_name, None).await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(DataType::Template, Action::Edit, old))
-            .await
-    }
-
-    #[instrument(skip(self))]
-    pub async fn templates_delete(&self, name: String) -> Result<(), anyhow::Error> {
-        let digested_name = name.digest();
-        let old = format!("{}.{}", &digested_name, Uuid::new_v4());
-        let digested_name = format!("{}.current", digested_name);
-
-        self.raw_delete(&digested_name, &old, "templates/").await?;
-
-        self.template_dir(&digested_name, Some(&old)).await?;
-
-        self.transaction_log
-            .log_transaction(InternalMessage::new(
-                DataType::Template,
-                Action::Delete,
-                old,
-            ))
-            .await
-    }
-
-    #[instrument(skip(self))]
-    pub async fn templates_get(&self, name: String) -> Result<FormTemplate, anyhow::Error> {
-        let digested_name = name.digest();
-        let digested_name = format!("{}.current", digested_name);
-        let bytes = self.raw_get(&digested_name, "templates/").await?;
-
-        serde_json::from_slice(bytes.as_slice()).map_err(Into::into)
-    }
-
-    #[instrument(skip(self), ret)]
-    pub async fn templates_list(&self) -> Result<Vec<String>, anyhow::Error> {
-        if !self.df_ctx.table_exist("templates")? {
-            let path = ListingTableUrl::parse(format!("{}templates", self.path))?;
-            let file_format = JsonFormat::default();
-            let listing_options =
-                ListingOptions::new(Arc::new(file_format)).with_file_extension(".current");
-            let schema = SchemaRef::new(Schema::new(vec![Field::new(
-                "name",
-                datafusion::arrow::datatypes::DataType::Utf8,
-                false,
-            )]));
-            let config = ListingTableConfig::new(path)
-                .with_listing_options(listing_options)
-                .with_schema(schema);
-            let provider = Arc::new(ListingTable::try_new(config)?);
-
-            self.df_ctx.register_table("templates", provider)?;
+            res_forms.push(de);
         }
 
-        let df = self.df_ctx.table("templates").await?;
-        let res = df.select(vec![col("name")])?.collect().await?;
-
-        let res: Vec<&RecordBatch> = res.iter().collect();
-
-        let res = record_batches_to_json_rows(res.as_slice())?;
-
-        let res = res
-            .iter()
-            .filter_map(|m| m.get("name"))
-            .filter_map(|thing| match thing {
-                Value::String(s) => Some(s.clone()),
-                _ => None,
-            })
-            .collect();
-
-        Ok(res)
+        Ok(res_forms)
     }
 
-    #[instrument(skip(self, data))]
-    pub async fn bytes_add(
-        &self,
-        name: String,
-        desired_key: String,
-        data: &[u8],
-    ) -> Result<(), anyhow::Error> {
-        let name = format!("{name}.current");
+    #[instrument(skip(self, storable))]
+    pub async fn storable_add(&self, storable: impl StorableObject + Serialize) -> Result<String, anyhow::Error> {
+        let check_res = self.get_blob_id(&storable.get_alt_key(), storable.get_type()).await?;
 
-        self.raw_add(
-            &name,
-            "bytes/",
-            &[
-                &(desired_key.len() as u64).to_be_bytes(),
-                desired_key.as_bytes(),
-                data,
-            ]
-                .concat(),
-        )
-            .await?;
+        if check_res.is_some() {
+            return Err(anyhow!("Object exists already"));
+        }
 
-        self.transaction_log
-            .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, name))
-            .await
+        let blob_id = self.write_blob(serde_json::to_string(&storable)?).await?;
+        let transaction = Transaction::new(
+            storable.get_type(),
+            Action::Add,
+            blob_id,
+            storable.get_alt_key(),
+        );
+
+        self.write_transaction(transaction).await?;
+
+        Ok(storable.get_alt_key())
     }
 
-    #[instrument(skip(self, data))]
-    pub async fn bytes_edit(
-        &self,
-        name: String,
-        desired_key: String,
-        data: &[u8],
-    ) -> Result<(), anyhow::Error> {
-        let old = format!("{}.{}", &name, Uuid::new_v4());
-        let name = format!("{name}.current");
+    #[instrument(skip(self, storable))]
+    pub async fn storable_edit(&self, storable: impl StorableObject + Serialize) -> Result<(), anyhow::Error> {
+        let check_res = self.get_blob_id(&storable.get_alt_key(), storable.get_type()).await?;
 
-        self.raw_edit(
-            &name,
-            &old,
-            "bytes/",
-            &[
-                &(desired_key.len() as u64).to_be_bytes(),
-                desired_key.as_bytes(),
-                data,
-            ]
-                .concat(),
-        )
-            .await?;
+        if check_res.is_none() {
+            return Err(anyhow!("Object does not exist"));
+        }
 
-        self.transaction_log
-            .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, old))
-            .await
+        let blob_id = self.write_blob(serde_json::to_string(&storable)?).await?;
+        let transaction = Transaction::new(
+            storable.get_type(),
+            Action::Edit,
+            blob_id,
+            storable.get_alt_key(),
+        );
+
+        self.write_transaction(transaction).await?;
+
+        Ok(())
     }
 
-    #[instrument(skip(self))]
-    pub async fn bytes_delete(&self, name: String) -> Result<(), anyhow::Error> {
-        let old = format!("{}.{}", &name, Uuid::new_v4());
-        let name = format!("{name}.current");
+    pub async fn storable_delete(&self, key: &str, data_type: DataType) -> Result<(), anyhow::Error> {
+        let check_res = self.get_blob_id(key, data_type.clone()).await?;
 
-        self.raw_delete(&name, &old, "bytes/").await?;
+        match check_res {
+            None => Err(anyhow!("Object does not exist")),
+            Some(id) => {
+                let transaction = Transaction::new(
+                    data_type,
+                    Action::Delete,
+                    id,
+                    key.to_string(),
+                );
 
-        self.transaction_log
-            .log_transaction(InternalMessage::new(DataType::Bytes, Action::Add, old))
-            .await
-    }
+                self.write_transaction(transaction).await?;
 
-    #[instrument(skip(self))]
-    pub async fn bytes_list(&self) -> Result<Vec<String>, anyhow::Error> {
-        let mut entries = fs::read_dir(format!("{}bytes/", self.path)).await?;
-        let mut keys: Vec<String> = Vec::new();
-
-        while let Some(entry) = entries.next_entry().await? {
-            if entry.path().to_string_lossy().ends_with(".current") {
-                let mut f = File::open(entry.path()).await?;
-                let len = f.read_u64().await?;
-                let mut bytes = vec![0_u8; len as usize];
-
-                f.read_exact(&mut bytes).await?;
-
-                keys.push(String::from_utf8_lossy(&bytes[..]).to_string());
+                Ok(())
             }
         }
-
-        Ok(keys)
     }
 
-    #[instrument(skip(self))]
-    pub async fn bytes_get(&self, name: String) -> Result<Vec<u8>, anyhow::Error> {
-        let name = format!("{name}.current");
+    pub async fn storable_list(&self, data_type: DataType) -> Result<Vec<String>, anyhow::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            format!(
+                "SELECT action, alt_key, MAX(timestamp)\
+                FROM {TRANSACTION_TABLE}\
+                WHERE data_type = ?\
+                GROUP BY alt_key")
+        );
 
-        let bytes = self.raw_get(&name, "bytes/").await?;
+        query_builder.push_bind(data_type);
 
-        let len = u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
+        let out: Vec<String> = query_builder
+            .build()
+            .fetch_all(&self.pool).await?
+            .iter()
+            .filter_map(|row| {
+                match (row.try_get("action").ok(), row.try_get("alt_key").ok()) {
+                    //i love pattern matching
+                    (Some(Action::Edit | Action::Add), Some(key)) => Some(key),
+                    _ => None
+                }
+            })
+            .collect();
 
-        Ok(Vec::from(&bytes[(len as usize + 8)..]))
-    }
-
-    pub async fn get_first(&self) -> Result<InternalMessage, anyhow::Error> {
-        self.transaction_log.get_first().await
-    }
-
-    pub async fn get_after(&self, id: Uuid) -> Result<InternalMessage, anyhow::Error> {
-        self.transaction_log.get_after(id).await
-    }
-
-    pub async fn list_files(&self) -> Result<Vec<String>, anyhow::Error> {
-        self.transaction_log.list_files().await
-    }
-
-    pub async fn get_file(&self, path: String) -> Result<Vec<u8>, anyhow::Error> {
-        self.transaction_log.get_file(path).await
+        Ok(out)
     }
 }
 
