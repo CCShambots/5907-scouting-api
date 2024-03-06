@@ -309,12 +309,14 @@ impl StorageManager {
 
         //subqueries :()
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT alt_key, action, MAX(timestamp) \
-                FROM {TRANSACTION_TABLE} \
-                WHERE data_type = 'Form' AND blob_id IN (\
-                    SELECT blob_id FROM {FORMS_TABLE} \
-                    WHERE template = ?\
-                ) \
+            "SELECT alt_key, LAST_VALUE(action) OVER (ORDER BY timestamp) as last_action, MAX(timestamp) \
+                FROM (
+         SELECT alt_key, LAST_VALUE(action) OVER (ORDER BY timestamp) as last_action, MAX(timestamp)
+         FROM {TRANSACTION_TABLE} \
+         WHERE data_type = 'Form' \
+         GROUP BY alt_key \
+     ) \
+                WHERE data_type = 'Form' AND last_action IS NOT 'Delete' \
                 GROUP BY alt_key"
         ));
 
@@ -347,12 +349,12 @@ impl StorageManager {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
             "SELECT blob_id \
 FROM ( \
-         SELECT blob_id, action, MAX(timestamp) \
+         SELECT blob_id, LAST_VALUE(action) OVER (ORDER BY timestamp) as last_action, MAX(timestamp) \
          FROM {TRANSACTION_TABLE} \
          WHERE data_type = 'Form' \
          GROUP BY alt_key
      ) \
-WHERE action IS NOT 'Delete' AND blob_id IN ( \
+WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
         SELECT blob_id \
         FROM {FORMS_TABLE} \
         WHERE template = "
