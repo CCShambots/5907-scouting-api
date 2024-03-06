@@ -90,9 +90,9 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
         "SELECT COUNT(*) FROM {}",
         storage_manager::TRANSACTION_TABLE
     ))
-        .execute(&mut conn)
-        .await
-        .is_err()
+    .execute(&mut conn)
+    .await
+    .is_err()
     {
         sqlx::query(&format!(
             "CREATE TABLE {} (\
@@ -105,25 +105,25 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
             )",
             storage_manager::TRANSACTION_TABLE
         ))
-            .execute(&mut conn)
-            .await?;
+        .execute(&mut conn)
+        .await?;
 
         sqlx::query(&format!(
             "CREATE INDEX idx_timestamp\
             ON {} (timestamp DESC)",
             storage_manager::TRANSACTION_TABLE
         ))
-            .execute(&mut conn)
-            .await?;
+        .execute(&mut conn)
+        .await?;
     }
 
     if sqlx::query(&format!(
         "SELECT COUNT(*) FROM {}",
         storage_manager::FORMS_TABLE
     ))
-        .execute(&mut conn)
-        .await
-        .is_err()
+    .execute(&mut conn)
+    .await
+    .is_err()
     {
         sqlx::query(&format!(
             "CREATE TABLE {} (\
@@ -135,8 +135,8 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
             )",
             storage_manager::FORMS_TABLE
         ))
-            .execute(&mut conn)
-            .await?;
+        .execute(&mut conn)
+        .await?;
     }
 
     Ok(())
@@ -149,11 +149,11 @@ async fn main() {
         .build()
         .unwrap();
 
-    let tls_config = settings.get::<TlsConfig>("tls_config")
+    let tls_config = settings
+        .get::<TlsConfig>("tls_config")
         .expect("No TLS config found");
 
-    let path: String = settings.get("path")
-        .expect("No storage path config found");
+    let path: String = settings.get("path").expect("No storage path config found");
 
     init_storage(&path)
         .await
@@ -168,7 +168,8 @@ async fn main() {
         .expect("No JWT config found")
         .build();
 
-    let sync_manager = settings.get::<SyncManager>("sync")
+    let sync_manager = settings
+        .get::<SyncManager>("sync")
         .expect("No sync config found");
 
     let storage_manager = StorageManager::new(&path)
