@@ -1,3 +1,4 @@
+use std::any::Any;
 use crate::datatypes::{DBForm, Filter, Form, FormTemplate, Schedule, StorableObject};
 use crate::transactions::{Action, DataType, Transaction};
 use anyhow::{anyhow, Error};
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha256::Sha256Digest;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{query, Executor, QueryBuilder, Row, Sqlite, SqlitePool, Execute};
+use sqlx::{query, Executor, QueryBuilder, Row, Sqlite, SqlitePool, Execute, ValueRef};
 use std::ops::Add;
 use std::path::Path;
 use std::str::FromStr;
@@ -30,8 +31,8 @@ use tokio::{fs, io};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
-pub const TRANSACTION_TABLE: &str = &"transactions";
-pub const FORMS_TABLE: &str = &"forms";
+pub const TRANSACTION_TABLE: &str = "transactions";
+pub const FORMS_TABLE: &str = "forms";
 
 pub struct StorageManager {
     path: String,
@@ -272,7 +273,7 @@ impl StorageManager {
 
         let transaction = Transaction::new(DataType::Form, Action::Delete, blob_id, id);
 
-        self.remove_form(blob_id).await?;
+        //self.remove_form(blob_id).await?;
         self.write_transaction(transaction).await?;
 
         Ok(())
@@ -299,10 +300,22 @@ impl StorageManager {
 
     #[instrument(skip(self), err)]
     pub async fn forms_list(&self, template: String) -> Result<Vec<Uuid>, anyhow::Error> {
-        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT {TRANSACTION_TABLE}.alt_key AS alt_key FROM {TRANSACTION_TABLE} \
+        /*let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+            "SELECT {TRANSACTION_TABLE}.alt_key AS alt_key, MAX({TRANSACTION_TABLE}.timestamp) FROM {TRANSACTION_TABLE} \
                 INNER JOIN {FORMS_TABLE} ON {TRANSACTION_TABLE}.blob_id = {FORMS_TABLE}.blob_id \
-                WHERE {FORMS_TABLE}.template = ? AND NOT {TRANSACTION_TABLE}.action = 'Delete'"
+                WHERE {FORMS_TABLE}.template = ? AND NOT {TRANSACTION_TABLE}.action = 'Delete' \
+                GROUP BY alt_key"
+        ));*/
+
+        //subqueries :()
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+            "SELECT alt_key, action, MAX(timestamp) \
+                FROM {TRANSACTION_TABLE} \
+                WHERE data_type = 'Form' AND blob_id IN (\
+                    SELECT blob_id FROM {FORMS_TABLE} \
+                    WHERE template = ?\
+                ) \
+                GROUP BY alt_key"
         ));
 
         let query = query_builder.build()
@@ -313,8 +326,12 @@ impl StorageManager {
             .await?
             .iter()
             .filter_map(|row| {
-                let str_value = row.try_get("alt_key").unwrap();
-                Uuid::parse_str(str_value).ok()
+                match (row.try_get("action"), row.try_get::<String, _>("alt_key")) {
+                    //i love pattern matching
+                    (Ok(Action::Edit | Action::Add), Ok(key)) =>
+                        Uuid::parse_str(&key).ok(),
+                    _ => None,
+                }
             })
             .collect();
 
@@ -328,7 +345,17 @@ impl StorageManager {
         filter: Filter,
     ) -> Result<Vec<Form>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT blob_id FROM {FORMS_TABLE} WHERE template = "
+            "SELECT blob_id \
+FROM ( \
+         SELECT blob_id, action, MAX(timestamp) \
+         FROM {TRANSACTION_TABLE} \
+         WHERE data_type = 'Form' \
+         GROUP BY alt_key
+     ) \
+WHERE action IS NOT 'Delete' AND blob_id IN ( \
+        SELECT blob_id \
+        FROM {FORMS_TABLE} \
+        WHERE template = "
         ));
 
         query_builder.push_bind(template);
@@ -353,12 +380,16 @@ impl StorageManager {
             query_builder.push_bind(match_number);
         }
 
+        query_builder.push(")");
+
         let res_ids: Vec<Uuid> = query_builder
             .build()
             .fetch_all(&self.pool)
             .await?
             .iter()
-            .filter_map(|r| r.try_get("blob_id").ok())
+            .filter_map(|row| {
+                row.try_get("blob_id").ok()
+            })
             .collect();
 
         let mut res_forms: Vec<Form> = Vec::new();
@@ -440,7 +471,7 @@ impl StorageManager {
     #[instrument[skip(self), err]]
     pub async fn storable_list(&self, data_type: DataType) -> Result<Vec<String>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT action, alt_key, MAX(timestamp) \
+            "SELECT alt_key, action, MAX(timestamp) \
                 FROM {TRANSACTION_TABLE} \
                 WHERE data_type = ? \
                 GROUP BY alt_key"
@@ -453,9 +484,9 @@ impl StorageManager {
             .await?
             .iter()
             .filter_map(|row| {
-                match (row.try_get("action").ok(), row.try_get("alt_key").ok()) {
+                match (row.try_get("action"), row.try_get("alt_key")) {
                     //i love pattern matching
-                    (Some(Action::Edit | Action::Add), Some(key)) => Some(key),
+                    (Ok(Action::Edit | Action::Add), Ok(key)) => Some(key),
                     _ => None,
                 }
             })

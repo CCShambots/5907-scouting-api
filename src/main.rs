@@ -22,7 +22,7 @@ use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
@@ -73,14 +73,17 @@ struct TlsConfig {
     application_bind: String,
 }
 
+#[instrument]
 async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
     let formatted_path = format!("sqlite://{path}database.db");
 
     if !Sqlite::database_exists(&formatted_path).await? {
+        warn!("No database found at specified location [{path}], initializing new one");
         Sqlite::create_database(&formatted_path).await?;
     }
 
     if !fs::try_exists(format!("{}blobs/", path)).await? {
+        warn!("No blob folder found at specified location [{path}], initializing new one");
         fs::create_dir(format!("{}blobs/", path)).await?;
     }
 
@@ -90,17 +93,19 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
         "SELECT COUNT(*) FROM {}",
         storage_manager::TRANSACTION_TABLE
     ))
-        .execute(&mut conn)
+        .fetch_one(&mut conn)
         .await
         .is_err()
     {
+        warn!("{} table not found, creating new one", storage_manager::TRANSACTION_TABLE);
+
         sqlx::query(&format!(
-            "CREATE TABLE {} (\
-            id TEXT NOT NULL,\
-            data_type TEXT NOT NULL,\
-            action TEXT NOT NULL,\
-            blob_id TEXT NOT NULL,\
-            alt_key TEXT NOT NULL,\
+            "CREATE TABLE {} ( \
+            id TEXT NOT NULL, \
+            data_type TEXT NOT NULL, \
+            action TEXT NOT NULL, \
+            blob_id TEXT NOT NULL, \
+            alt_key TEXT NOT NULL, \
             timestamp INTEGER NOT NULL\
             )",
             storage_manager::TRANSACTION_TABLE
@@ -109,34 +114,40 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
             .await?;
 
         sqlx::query(&format!(
-            "CREATE INDEX idx_timestamp\
+            "CREATE INDEX idx_timestamp \
             ON {} (timestamp DESC)",
             storage_manager::TRANSACTION_TABLE
         ))
             .execute(&mut conn)
             .await?;
+
+        info!("{} table created", storage_manager::TRANSACTION_TABLE);
     }
 
     if sqlx::query(&format!(
         "SELECT COUNT(*) FROM {}",
         storage_manager::FORMS_TABLE
     ))
-        .execute(&mut conn)
+        .fetch_one(&mut conn)
         .await
         .is_err()
     {
+        warn!("{} table not found, creating new one", storage_manager::FORMS_TABLE);
+
         sqlx::query(&format!(
-            "CREATE TABLE {} (\
-            blob_id TEXT NOT NULL,\
-            team INTEGER NOT NULL,\
-            match_number INTEGER NOT NULL,\
-            event_key TEXT NOT NULL,\
-            template TEXT NOT NULL,\
+            "CREATE TABLE {} ( \
+            blob_id TEXT NOT NULL, \
+            team INTEGER NOT NULL, \
+            match_number INTEGER NOT NULL, \
+            event_key TEXT NOT NULL, \
+            template TEXT NOT NULL\
             )",
             storage_manager::FORMS_TABLE
         ))
             .execute(&mut conn)
             .await?;
+
+        info!("{} table created", storage_manager::FORMS_TABLE);
     }
 
     Ok(())
@@ -144,6 +155,8 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
 
 #[tokio::main]
 async fn main() {
+    setup_tracing();
+
     let settings = config::Config::builder()
         .add_source(config::File::with_name("settings"))
         .build()
@@ -176,7 +189,7 @@ async fn main() {
         .await
         .expect("Failed to create storage manager (probably issue with sqlite db)");
 
-    setup_tracing();
+
     // set up metrics for adding into the application
     let metrics = axum_otel_metrics::HttpMetricsLayerBuilder::new().build();
     // get the /metrics endpoint for publishing
