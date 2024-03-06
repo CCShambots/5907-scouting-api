@@ -223,7 +223,7 @@ impl StorageManager {
             .await
     }
 
-    #[instrument(skip(self, form), ret)]
+    #[instrument(skip(self, form), err)]
     pub async fn forms_edit(
         &self,
         template: String,
