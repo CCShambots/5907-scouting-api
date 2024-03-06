@@ -1,6 +1,5 @@
-use std::net::IpAddr;
-use crate::datatypes::ItemPath;
 use crate::storage_manager::StorageManager;
+use crate::sync::{ChildID, SyncManager};
 use auth::{GoogleAuthenticator, GoogleUser, JwtManagerBuilder};
 use axum::body::Body;
 use axum::http::Method;
@@ -13,10 +12,12 @@ use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use opentelemetry_sdk::{trace, Resource};
-use std::sync::Arc;
-use std::time::Duration;
 use sqlx::migrate::MigrateDatabase;
 use sqlx::{Connection, Executor, Sqlite, SqliteConnection};
+use std::net::IpAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::fs;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -25,7 +26,6 @@ use tracing::{info, instrument};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
-use crate::sync::{ChildID, SyncManager};
 
 mod auth;
 mod bytes;
@@ -73,16 +73,27 @@ struct TlsConfig {
     application_bind: String,
 }
 
-async fn init_sqlite(path: &str) -> Result<(), anyhow::Error> {
+async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
     let formatted_path = format!("sqlite://{path}database.db");
 
     if !Sqlite::database_exists(&formatted_path).await? {
         Sqlite::create_database(&formatted_path).await?;
     }
 
+    if !fs::try_exists(format!("{}blobs/", path)).await? {
+        fs::create_dir(format!("{}blobs/", path)).await?;
+    }
+
     let mut conn = SqliteConnection::connect(&formatted_path).await?;
 
-    if sqlx::query(&format!("SELECT COUNT(*) FROM {}", storage_manager::TRANSACTION_TABLE)).execute(&mut conn).await.is_err() {
+    if sqlx::query(&format!(
+        "SELECT COUNT(*) FROM {}",
+        storage_manager::TRANSACTION_TABLE
+    ))
+        .execute(&mut conn)
+        .await
+        .is_err()
+    {
         sqlx::query(&format!(
             "CREATE TABLE {} (\
             id TEXT NOT NULL,\
@@ -92,14 +103,40 @@ async fn init_sqlite(path: &str) -> Result<(), anyhow::Error> {
             alt_key TEXT NOT NULL,\
             timestamp INTEGER NOT NULL\
             )",
-            storage_manager::TRANSACTION_TABLE))
-            .execute(&mut conn).await?;
+            storage_manager::TRANSACTION_TABLE
+        ))
+            .execute(&mut conn)
+            .await?;
 
         sqlx::query(&format!(
             "CREATE INDEX idx_timestamp\
             ON {} (timestamp DESC)",
-            storage_manager::TRANSACTION_TABLE))
-            .execute(&mut conn).await?;
+            storage_manager::TRANSACTION_TABLE
+        ))
+            .execute(&mut conn)
+            .await?;
+    }
+
+    if sqlx::query(&format!(
+        "SELECT COUNT(*) FROM {}",
+        storage_manager::FORMS_TABLE
+    ))
+        .execute(&mut conn)
+        .await
+        .is_err()
+    {
+        sqlx::query(&format!(
+            "CREATE TABLE {} (\
+            blob_id TEXT NOT NULL,\
+            team INTEGER NOT NULL,\
+            match_number INTEGER NOT NULL,\
+            event_key TEXT NOT NULL,\
+            template TEXT NOT NULL,\
+            )",
+            storage_manager::FORMS_TABLE
+        ))
+            .execute(&mut conn)
+            .await?;
     }
 
     Ok(())
@@ -112,22 +149,31 @@ async fn main() {
         .build()
         .unwrap();
 
-    let tls_config = settings.get::<TlsConfig>("tls_config").unwrap();
+    let tls_config = settings.get::<TlsConfig>("tls_config")
+        .expect("No TLS config found");
 
-    let path: String = settings.get("path").unwrap();
+    let path: String = settings.get("path")
+        .expect("No storage path config found");
+
+    init_storage(&path)
+        .await
+        .expect("Failed to initialize storage");
 
     let google_authenticator = settings
         .get::<GoogleAuthenticator>("authenticator")
-        .unwrap();
+        .expect("No authenticator config found");
 
     let jwt_manager = settings
         .get::<JwtManagerBuilder>("jwt_manager")
-        .unwrap()
+        .expect("No JWT config found")
         .build();
 
-    let sync_manager = settings
-        .get::<SyncManager>("sync")
-        .unwrap();
+    let sync_manager = settings.get::<SyncManager>("sync")
+        .expect("No sync config found");
+
+    let storage_manager = StorageManager::new(&path)
+        .await
+        .expect("Failed to create storage manager (probably issue with sqlite db)");
 
     setup_tracing();
     // set up metrics for adding into the application
@@ -137,7 +183,7 @@ async fn main() {
 
     // set up the routes and middleware
     let router = axum::Router::new()
-        .route("/protected/age/*path", axum::routing::get(misc::age))
+        //.route("/protected/age/*path", axum::routing::get(misc::age))
         .route("/protected", axum::routing::get(handler))
         .route("/protected/code", axum::routing::get(auth::auth_code))
         //bytes

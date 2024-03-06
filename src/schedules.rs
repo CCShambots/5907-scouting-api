@@ -1,5 +1,6 @@
 use crate::datatypes::Schedule;
 use crate::storage_manager::StorageManager;
+use crate::transactions::DataType;
 use anyhow::Error;
 use axum::extract::Path;
 use axum::http::StatusCode;
@@ -7,7 +8,6 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use std::sync::Arc;
 use tracing::instrument;
-use crate::transactions::DataType;
 
 #[instrument(skip(schedule, storage_manager))]
 pub async fn add_schedule(
@@ -25,7 +25,10 @@ pub async fn get_schedule(
     Path(name): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> SchedulesResponse {
-    match storage_manager.storable_get_serialized(name, DataType::Schedule).await {
+    match storage_manager
+        .storable_get_serialized(name, DataType::Schedule)
+        .await
+    {
         Ok(t) => SchedulesResponse::SerializedSchedule(t),
         Err(_) => SchedulesResponse::FailedToRead,
     }
@@ -55,7 +58,10 @@ pub async fn delete_schedule(
     Path(name): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> SchedulesResponse {
-    match storage_manager.storable_delete(&name, DataType::Schedule).await {
+    match storage_manager
+        .storable_delete(&name, DataType::Schedule)
+        .await
+    {
         Ok(_) => SchedulesResponse::OK,
         Err(_) => SchedulesResponse::FailedToDelete,
     }
@@ -76,7 +82,9 @@ impl IntoResponse for SchedulesResponse {
     fn into_response(self) -> Response {
         match self {
             SchedulesResponse::OK => StatusCode::OK.into_response(),
-            SchedulesResponse::SerializedSchedule(t) => (StatusCode::OK, String::from_utf8(t).unwrap()).into_response(),
+            SchedulesResponse::SerializedSchedule(t) => {
+                (StatusCode::OK, String::from_utf8(t).unwrap()).into_response()
+            }
             SchedulesResponse::FailedToAdd => StatusCode::BAD_REQUEST.into_response(),
             SchedulesResponse::FailedToEdit => StatusCode::BAD_REQUEST.into_response(),
             SchedulesResponse::FailedToDelete => StatusCode::BAD_REQUEST.into_response(),

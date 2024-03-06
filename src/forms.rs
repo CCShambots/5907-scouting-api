@@ -29,7 +29,7 @@ pub async fn list_forms(
 ) -> FormsResponse {
     match storage_manager.forms_list(template).await {
         Ok(l) => FormsResponse::IDList(l),
-        Err(_) => FormsResponse::FailedToRead
+        Err(_) => FormsResponse::FailedToRead,
     }
 }
 
@@ -105,7 +105,9 @@ impl IntoResponse for FormsResponse {
             FormsResponse::Filtered(l) => (StatusCode::OK, Json(l)).into_response(),
             FormsResponse::ID(id) => (StatusCode::OK, Json(id)).into_response(),
             FormsResponse::IDList(ids) => (StatusCode::OK, Json(ids)).into_response(),
-            FormsResponse::SerializedForm(ser) => (StatusCode::OK, String::from_utf8(ser).unwrap()).into_response()
+            FormsResponse::SerializedForm(ser) => {
+                (StatusCode::OK, String::from_utf8(ser).unwrap()).into_response()
+            }
         }
     }
 }

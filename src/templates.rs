@@ -1,12 +1,12 @@
 use crate::datatypes::FormTemplate;
 use crate::storage_manager::StorageManager;
+use crate::transactions::DataType;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use std::sync::Arc;
 use tracing::instrument;
-use crate::transactions::DataType;
 
 #[instrument(skip(template, storage_manager))]
 pub async fn add_template(
@@ -24,7 +24,10 @@ pub async fn get_template(
     Path(name): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> TemplatesResponse {
-    match storage_manager.storable_get_serialized(name, DataType::Template).await {
+    match storage_manager
+        .storable_get_serialized(name, DataType::Template)
+        .await
+    {
         Ok(t) => TemplatesResponse::SerializedTemplate(t),
         Err(_) => TemplatesResponse::FailedToRead,
     }
@@ -54,7 +57,10 @@ pub async fn delete_template(
     Path(name): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> TemplatesResponse {
-    match storage_manager.storable_delete(&name, DataType::Template).await {
+    match storage_manager
+        .storable_delete(&name, DataType::Template)
+        .await
+    {
         Ok(_) => TemplatesResponse::OK,
         Err(_) => TemplatesResponse::FailedToDelete,
     }
@@ -75,7 +81,9 @@ impl IntoResponse for TemplatesResponse {
     fn into_response(self) -> Response {
         match self {
             TemplatesResponse::OK => StatusCode::OK.into_response(),
-            TemplatesResponse::SerializedTemplate(t) => (StatusCode::OK, String::from_utf8(t).unwrap()).into_response(),
+            TemplatesResponse::SerializedTemplate(t) => {
+                (StatusCode::OK, String::from_utf8(t).unwrap()).into_response()
+            }
             TemplatesResponse::FailedToAdd => StatusCode::BAD_REQUEST.into_response(),
             TemplatesResponse::FailedToEdit => StatusCode::BAD_REQUEST.into_response(),
             TemplatesResponse::FailedToDelete => StatusCode::BAD_REQUEST.into_response(),

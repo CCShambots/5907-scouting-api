@@ -16,7 +16,10 @@ impl Transaction {
     }
 
     pub fn describe(&self) -> String {
-        format!("[{:?}] of [{:?}] object with key [{}]", self.action, self.data_type, self.alt_key)
+        format!(
+            "[{:?}] of [{:?}] object with key [{}]",
+            self.action, self.data_type, self.alt_key
+        )
     }
 }
 

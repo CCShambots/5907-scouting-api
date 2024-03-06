@@ -1,4 +1,6 @@
+use crate::datatypes::BytesReference;
 use crate::storage_manager::StorageManager;
+use crate::transactions::DataType;
 use anyhow::Error;
 use axum::body::Bytes;
 use axum::extract::Path;
@@ -7,8 +9,6 @@ use axum::response::{IntoResponse, Response};
 use axum::Extension;
 use std::sync::Arc;
 use tracing::{info, instrument};
-use crate::datatypes::BytesReference;
-use crate::transactions::DataType;
 
 #[instrument(skip(storage_manager, parts))]
 pub async fn store_bytes(
@@ -16,7 +16,10 @@ pub async fn store_bytes(
     storage_manager: Extension<Arc<StorageManager>>,
     parts: Bytes,
 ) -> StoreBytesResponse {
-    match storage_manager.storable_add(BytesReference(blob_id, parts.to_vec())).await {
+    match storage_manager
+        .storable_add(BytesReference(blob_id, parts.to_vec()))
+        .await
+    {
         Ok(_) => StoreBytesResponse::OK,
         Err(_) => StoreBytesResponse::FailedToWriteBlob,
     }
@@ -27,7 +30,10 @@ pub async fn get_bytes(
     Path(blob_id): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> StoreBytesResponse {
-    match storage_manager.storable_get_serialized(blob_id, DataType::Bytes).await {
+    match storage_manager
+        .storable_get_serialized(blob_id, DataType::Bytes)
+        .await
+    {
         Ok(bytes) => StoreBytesResponse::Data(bytes),
         Err(_) => StoreBytesResponse::NotFound,
     }
@@ -42,7 +48,9 @@ pub async fn delete_bytes(
 
     let blob_id = sha256::digest(blob_id);
 
-    let _ = storage_manager.storable_delete(&blob_id, DataType::Bytes).await;
+    let _ = storage_manager
+        .storable_delete(&blob_id, DataType::Bytes)
+        .await;
 
     StoreBytesResponse::DeleteSuccess
 }
