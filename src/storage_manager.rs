@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha256::Sha256Digest;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{query, Executor, QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{query, Executor, QueryBuilder, Row, Sqlite, SqlitePool, Execute};
 use std::ops::Add;
 use std::path::Path;
 use std::str::FromStr;
@@ -66,21 +66,22 @@ impl StorageManager {
 
     #[instrument(skip(self, form))]
     async fn write_form(&self, form: DBForm) -> Result<(), anyhow::Error> {
-        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "INSERT INTO {FORMS_TABLE} (blob_id, team, match_number, event_key, template)"
+        let mut query: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+            "INSERT INTO {FORMS_TABLE} (blob_id, team, match_number, event_key, template) VALUES(?, ?, ?, ?, ?)"
         ));
+        let mut query = query.build();
 
-        query_builder.push_bind(form.blob_id);
-        query_builder.push_bind(form.team);
-        query_builder.push_bind(form.match_number);
-        query_builder.push_bind(form.event_key);
-        query_builder.push_bind(form.template);
+        query = query.bind(form.blob_id);
+        query = query.bind(form.team);
+        query = query.bind(form.match_number);
+        query = query.bind(form.event_key);
+        query = query.bind(form.template);
 
         if self.check_form_exists(form.blob_id).await? {
             self.remove_form(form.blob_id).await?;
         }
 
-        self.pool.execute(query_builder.build()).await?;
+        self.pool.execute(query).await?;
 
         Ok(())
     }
@@ -90,11 +91,11 @@ impl StorageManager {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
             "SELECT COUNT(*) AS count FROM {FORMS_TABLE} WHERE blob_id = ?"
         ));
+        let mut query = query_builder.build();
 
-        query_builder.push_bind(blob_id);
+        query = query.bind(blob_id);
 
-        let count: i64 = query_builder
-            .build()
+        let count: i64 = query
             .fetch_one(&self.pool)
             .await?
             .try_get("count")?;
@@ -106,29 +107,32 @@ impl StorageManager {
     async fn remove_form(&self, blob_id: Uuid) -> Result<(), anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> =
             QueryBuilder::new(format!("DELETE FROM {FORMS_TABLE} WHERE blob_id = ?"));
+        let mut query = query_builder.build();
 
-        query_builder.push_bind(blob_id);
+        query = query.bind(blob_id);
 
-        self.pool.execute(query_builder.build()).await?;
+        self.pool.execute(query).await?;
 
         Ok(())
     }
 
-    #[instrument(skip(self, transaction))]
+    #[instrument(skip(self, transaction), ret)]
     async fn write_transaction(&self, transaction: Transaction) -> Result<(), anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "INSERT INTO {TRANSACTION_TABLE} (id, data_type, action, blob_id, timestamp)"
+            "INSERT INTO {TRANSACTION_TABLE} VALUES (?, ?, ?, ?, ?, ?)"
         ));
+        let mut query = query_builder.build();
 
         let desc = transaction.describe();
 
-        query_builder.push_bind(transaction.id);
-        query_builder.push_bind(transaction.data_type);
-        query_builder.push_bind(transaction.action);
-        query_builder.push_bind(transaction.blob_id);
-        query_builder.push_bind(transaction.timestamp);
+        query = query.bind(transaction.id);
+        query = query.bind(transaction.data_type);
+        query = query.bind(transaction.action);
+        query = query.bind(transaction.blob_id);
+        query = query.bind(transaction.alt_key);
+        query = query.bind(transaction.timestamp);
 
-        self.pool.execute(query_builder.build()).await?;
+        self.pool.execute(query).await?;
 
         info!("{}", desc);
 
@@ -145,7 +149,7 @@ impl StorageManager {
     #[instrument(skip(self))]
     pub async fn blob_deleted(&self, id: Uuid) -> Result<bool, anyhow::Error> {
         let res: Action =
-            sqlx::query("SELECT action FROM transactions WHERE id = ? ORDER BY timestamp DESC")
+            sqlx::query("SELECT action FROM transactions WHERE blob_id = ? ORDER BY timestamp DESC")
                 .bind(id)
                 .fetch_one(&self.pool)
                 .await?
@@ -160,26 +164,29 @@ impl StorageManager {
         alt_key: &str,
         data_type: DataType,
     ) -> Result<Uuid, anyhow::Error> {
-        let res: Uuid = sqlx::query("SELECT id FROM transactions WHERE alt_key = ? AND data_type = ? ORDER BY timestamp DESC")
+        let res: Uuid = sqlx::query("SELECT blob_id FROM transactions WHERE alt_key = ? AND data_type = ? ORDER BY timestamp DESC")
             .bind(alt_key)
             .bind(data_type)
             .fetch_one(&self.pool).await?
-            .try_get("id")?;
+            .try_get("blob_id")?;
 
         Ok(res)
     }
 
     #[instrument(skip(self, form))]
     pub async fn forms_add(&self, template: String, form: Form) -> Result<Uuid, anyhow::Error> {
+        let id = Uuid::new_v4();
+        let mut form = form;
+        form.id = Some(id);
         let blob_id = self.write_blob(serde_json::to_string(&form)?).await?;
         let db_form = form.to_db_form(blob_id, template);
         let transaction =
-            Transaction::new(DataType::Form, Action::Add, blob_id, blob_id.to_string());
+            Transaction::new(DataType::Form, Action::Add, blob_id, id.to_string());
 
         self.write_form(db_form).await?;
         self.write_transaction(transaction).await?;
 
-        Ok(blob_id)
+        Ok(id)
     }
 
     #[instrument(skip(self))]
@@ -188,7 +195,7 @@ impl StorageManager {
         alt_key: &str,
         data_type: DataType,
     ) -> Result<Option<Uuid>, anyhow::Error> {
-        let blob_id = self.latest_blob_from_alt_key(&alt_key, data_type).await;
+        let blob_id = self.latest_blob_from_alt_key(alt_key, data_type).await;
 
         match blob_id {
             Ok(id) => {
@@ -213,7 +220,7 @@ impl StorageManager {
                 .await?
                 .ok_or(anyhow!("blob was deleted"))?,
         )
-        .await
+            .await
     }
 
     #[instrument(skip(self, form), ret)]
@@ -236,6 +243,9 @@ impl StorageManager {
             return Err(anyhow!("Form does not exist"));
         }
 
+        let uuid = Uuid::parse_str(&id)?;
+        let mut form = form;
+        form.id = Some(uuid);
         let blob_id = self.write_blob(serde_json::to_string(&form)?).await?;
         let db_form = form.to_db_form(blob_id, template);
         let transaction = Transaction::new(DataType::Form, Action::Edit, blob_id, id);
@@ -246,7 +256,7 @@ impl StorageManager {
         Ok(())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), err)]
     pub async fn forms_delete(&self, _: String, id: String) -> Result<(), anyhow::Error> {
         let blob_id = self
             .latest_blob_from_alt_key(&id.to_string(), DataType::Form)
@@ -287,56 +297,59 @@ impl StorageManager {
         self.read_blob(blob_id).await
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), err)]
     pub async fn forms_list(&self, template: String) -> Result<Vec<Uuid>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT alt_key FROM {TRANSACTION_TABLE} \
+            "SELECT {TRANSACTION_TABLE}.alt_key AS alt_key FROM {TRANSACTION_TABLE} \
                 INNER JOIN {FORMS_TABLE} ON {TRANSACTION_TABLE}.blob_id = {FORMS_TABLE}.blob_id \
-                WHERE template = ? AND deleted = false"
+                WHERE {FORMS_TABLE}.template = ? AND NOT {TRANSACTION_TABLE}.action = 'Delete'"
         ));
 
-        query_builder.push_bind(template);
+        let query = query_builder.build()
+            .bind(template);
 
-        let ids: Vec<Uuid> = query_builder
-            .build()
+        let ids: Vec<Uuid> = query
             .fetch_all(&self.pool)
             .await?
             .iter()
-            .filter_map(|row| row.try_get("alt_key").ok())
+            .filter_map(|row| {
+                let str_value = row.try_get("alt_key").unwrap();
+                Uuid::parse_str(str_value).ok()
+            })
             .collect();
 
         Ok(ids)
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), err)]
     pub async fn forms_filter(
         &self,
         template: String,
         filter: Filter,
     ) -> Result<Vec<Form>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT blob_id FROM {FORMS_TABLE} WHERE template = ?"
+            "SELECT blob_id FROM {FORMS_TABLE} WHERE template = "
         ));
 
         query_builder.push_bind(template);
 
         if let Some(team) = filter.team {
-            query_builder.push(" AND team = ?");
+            query_builder.push(" AND team = ");
             query_builder.push_bind(team);
         }
 
         if let Some(scouter) = filter.scouter {
-            query_builder.push(" AND scouter = ?");
+            query_builder.push(" AND scouter = ");
             query_builder.push_bind(scouter);
         }
 
         if let Some(event) = filter.event {
-            query_builder.push(" AND event = ?");
+            query_builder.push(" AND event = ");
             query_builder.push_bind(event);
         }
 
         if let Some(match_number) = filter.match_number {
-            query_builder.push(" AND match_number = ?");
+            query_builder.push(" AND match_number = ");
             query_builder.push_bind(match_number);
         }
 
@@ -360,7 +373,7 @@ impl StorageManager {
         Ok(res_forms)
     }
 
-    #[instrument(skip(self, storable))]
+    #[instrument(skip(self, storable), err)]
     pub async fn storable_add(
         &self,
         storable: impl StorableObject,
@@ -368,6 +381,7 @@ impl StorageManager {
         let check_res = self
             .get_blob_id(&storable.get_alt_key(), storable.get_type())
             .await?;
+
         let alt_key = storable.get_alt_key();
         let data_type = storable.get_type();
 
@@ -383,7 +397,7 @@ impl StorageManager {
         Ok(alt_key)
     }
 
-    #[instrument(skip(self, storable))]
+    #[instrument(skip(self, storable), err)]
     pub async fn storable_edit(&self, storable: impl StorableObject) -> Result<(), anyhow::Error> {
         let check_res = self
             .get_blob_id(&storable.get_alt_key(), storable.get_type())
@@ -403,12 +417,13 @@ impl StorageManager {
         Ok(())
     }
 
+    #[instrument(skip(self), err)]
     pub async fn storable_delete(
         &self,
         key: &str,
         data_type: DataType,
     ) -> Result<(), anyhow::Error> {
-        let check_res = self.get_blob_id(key, data_type.clone()).await?;
+        let check_res = self.get_blob_id(key, data_type).await?;
 
         match check_res {
             None => Err(anyhow!("Object does not exist")),
@@ -422,18 +437,18 @@ impl StorageManager {
         }
     }
 
+    #[instrument[skip(self), err]]
     pub async fn storable_list(&self, data_type: DataType) -> Result<Vec<String>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT action, alt_key, MAX(timestamp)\
-                FROM {TRANSACTION_TABLE}\
-                WHERE data_type = ?\
+            "SELECT action, alt_key, MAX(timestamp) \
+                FROM {TRANSACTION_TABLE} \
+                WHERE data_type = ? \
                 GROUP BY alt_key"
         ));
 
-        query_builder.push_bind(data_type);
+        let query = query_builder.build().bind(data_type);
 
-        let out: Vec<String> = query_builder
-            .build()
+        let out: Vec<String> = query
             .fetch_all(&self.pool)
             .await?
             .iter()
@@ -449,26 +464,32 @@ impl StorageManager {
         Ok(out)
     }
 
+    #[instrument(skip(self), err)]
     pub async fn storable_get_serialized(
         &self,
         key: String,
         data_type: DataType,
     ) -> Result<Vec<u8>, anyhow::Error> {
-        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT blob_id, MAX(timestamp)\
-                FROM {TRANSACTION_TABLE}\
-                WHERE data_type = ? AND key = ?\
+        let mut query = QueryBuilder::new(format!(
+            "SELECT blob_id, action, MAX(timestamp) \
+                FROM {TRANSACTION_TABLE} \
+                WHERE data_type = ? AND alt_key = ? \
                 GROUP BY alt_key"
         ));
+        let mut query = query.build();
 
-        query_builder.push_bind(data_type);
-        query_builder.push_bind(key);
+        query = query.bind(data_type);
+        query = query.bind(key);
 
-        let blob_id: Uuid = query_builder
-            .build()
+        let query_res = query
             .fetch_one(&self.pool)
-            .await?
-            .try_get("blob_id")?;
+            .await?;
+
+        if matches!(query_res.try_get("action")?, Action::Delete) {
+            return Err(anyhow!("Object was deleted"));
+        }
+
+        let blob_id: Uuid = query_res.try_get("blob_id")?;
 
         self.read_blob(blob_id).await
     }

@@ -90,9 +90,9 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
         "SELECT COUNT(*) FROM {}",
         storage_manager::TRANSACTION_TABLE
     ))
-    .execute(&mut conn)
-    .await
-    .is_err()
+        .execute(&mut conn)
+        .await
+        .is_err()
     {
         sqlx::query(&format!(
             "CREATE TABLE {} (\
@@ -105,25 +105,25 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
             )",
             storage_manager::TRANSACTION_TABLE
         ))
-        .execute(&mut conn)
-        .await?;
+            .execute(&mut conn)
+            .await?;
 
         sqlx::query(&format!(
             "CREATE INDEX idx_timestamp\
             ON {} (timestamp DESC)",
             storage_manager::TRANSACTION_TABLE
         ))
-        .execute(&mut conn)
-        .await?;
+            .execute(&mut conn)
+            .await?;
     }
 
     if sqlx::query(&format!(
         "SELECT COUNT(*) FROM {}",
         storage_manager::FORMS_TABLE
     ))
-    .execute(&mut conn)
-    .await
-    .is_err()
+        .execute(&mut conn)
+        .await
+        .is_err()
     {
         sqlx::query(&format!(
             "CREATE TABLE {} (\
@@ -135,8 +135,8 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
             )",
             storage_manager::FORMS_TABLE
         ))
-        .execute(&mut conn)
-        .await?;
+            .execute(&mut conn)
+            .await?;
     }
 
     Ok(())
@@ -279,8 +279,8 @@ async fn main() {
             axum::routing::get(auth::get_jwt_cache_from_code),
         )
         //Sync
-        .route("/sync/diff", axum::routing::get(sync::diff))
-        .route_layer(from_extractor::<ChildID>())
+        /*.route("/sync/diff", axum::routing::get(sync::diff))
+        .route_layer(from_extractor::<ChildID>())*/
         .layer(CorsLayer::very_permissive())
         .layer(
             ServiceBuilder::new()

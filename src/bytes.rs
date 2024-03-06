@@ -44,10 +44,6 @@ pub async fn delete_bytes(
     Path(blob_id): Path<String>,
     storage_manager: Extension<Arc<StorageManager>>,
 ) -> StoreBytesResponse {
-    let blob_id = blob_id.clone();
-
-    let blob_id = sha256::digest(blob_id);
-
     let _ = storage_manager
         .storable_delete(&blob_id, DataType::Bytes)
         .await;
