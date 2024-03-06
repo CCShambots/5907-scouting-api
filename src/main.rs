@@ -154,40 +154,35 @@ async fn init_storage(path: &str) -> Result<(), anyhow::Error> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), anyhow::Error> {
     setup_tracing();
 
     let settings = config::Config::builder()
         .add_source(config::File::with_name("settings"))
-        .build()
-        .unwrap();
+        .build()?;
 
     let tls_config = settings
         .get::<TlsConfig>("tls_config")
         .expect("No TLS config found");
 
-    let path: String = settings.get("path").expect("No storage path config found");
+    let path: String = settings.get("path")?;
 
     init_storage(&path)
         .await
         .expect("Failed to initialize storage");
 
     let google_authenticator = settings
-        .get::<GoogleAuthenticator>("authenticator")
-        .expect("No authenticator config found");
+        .get::<GoogleAuthenticator>("authenticator")?;
 
     let jwt_manager = settings
-        .get::<JwtManagerBuilder>("jwt_manager")
-        .expect("No JWT config found")
+        .get::<JwtManagerBuilder>("jwt_manager")?
         .build();
 
     let sync_manager = settings
-        .get::<SyncManager>("sync")
-        .expect("No sync config found");
+        .get::<SyncManager>("sync")?;
 
     let storage_manager = StorageManager::new(&path)
-        .await
-        .expect("Failed to create storage manager (probably issue with sqlite db)");
+        .await?;
 
 
     // set up metrics for adding into the application
@@ -322,10 +317,11 @@ async fn main() {
     info!("starting metrics server");
 
     // Metrics endpoint should be published on a non-TLS port separately
-    axum_server::bind(tls_config.metrics_bind.parse().unwrap())
+    axum_server::bind(tls_config.metrics_bind.parse()?)
         .serve(metrics_routes.into_make_service())
-        .await
-        .unwrap();
+        .await?;
+
+    Ok(())
 }
 
 fn setup_tracing() {
