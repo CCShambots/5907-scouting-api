@@ -30,9 +30,12 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
+use crate::sync::ChildID;
 
 pub const TRANSACTION_TABLE: &str = "transactions";
 pub const FORMS_TABLE: &str = "forms";
+pub const WATER_MARK_TABLE: &str = "watermarks";
+pub const NEEDED_BLOB_TABLE: &str = "blobs";
 
 pub struct StorageManager {
     path: String,
@@ -53,7 +56,7 @@ impl StorageManager {
     async fn write_blob(&self, data: impl AsRef<[u8]>) -> Result<Uuid, anyhow::Error> {
         let id: Uuid = Uuid::new_v4();
 
-        write_non_create(format!("{}{}", self.path, id.to_string().digest()), data).await?;
+        write(format!("{}{}", self.path, id.to_string().digest()), data).await?;
 
         Ok(id)
     }
@@ -170,6 +173,21 @@ impl StorageManager {
             .bind(data_type)
             .fetch_one(&self.pool).await?
             .try_get("blob_id")?;
+
+        Ok(res)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn latest_action_from_alt_key(
+        &self,
+        alt_key: &str,
+        data_type: DataType,
+    ) -> Result<Action, anyhow::Error> {
+        let res: Action = sqlx::query("SELECT action FROM transactions WHERE alt_key = ? AND data_type = ? ORDER BY timestamp DESC")
+            .bind(alt_key)
+            .bind(data_type)
+            .fetch_one(&self.pool).await?
+            .try_get("action")?;
 
         Ok(res)
     }
@@ -526,18 +544,101 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
 
         self.read_blob(blob_id).await
     }
+
+    pub async fn update_watermark(&self, owner_id: Uuid, transaction_id: Uuid) -> Result<(), anyhow::Error> {
+        let mut transaction = self.pool.begin().await?;
+
+        sqlx::query(&format!(
+            "DELETE FROM {WATER_MARK_TABLE} \
+            WHERE owner_id = ?"
+        ))
+            .bind(owner_id)
+            .execute(transaction.as_mut())
+            .await?;
+
+        sqlx::query(&format!(
+            "INSERT INTO {WATER_MARK_TABLE} \
+            (owner_id, transaction_id), VALUES(?, ?)"
+        ))
+            .bind(owner_id)
+            .bind(transaction_id)
+            .execute(transaction.as_mut())
+            .await?;
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    pub async fn get_needed_blobs(&self, owner_id: Uuid) -> Result<(), anyhow::Error> {
+        let res = sqlx::query(&format!(
+            "SELECT * FROM {NEEDED_BLOB_TABLE} \
+            WHERE owner_id = ?"
+        ))
+            .bind(owner_id)
+            .fetch_all(&self.pool)
+            .await?
+            .iter().filter_map()
+    }
+
+    pub async fn write_foreign_transaction(&self, transaction: Transaction) -> Result<(), anyhow::Error> {
+        let mut transaction = transaction;
+        transaction.timestamp = Utc::now().timestamp_micros();
+        self.write_transaction(transaction).await?;
+
+        Ok(())
+    }
+
+    pub async fn get_transaction(&self, id: Uuid) -> Result<Transaction, anyhow::Error> {
+        let mut query: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+            "SELECT * \
+            FROM {TRANSACTION_TABLE}\
+            WHERE id = "
+        ));
+
+        query.push_bind(id);
+
+        let transaction: Transaction = query
+            .build_query_as()
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(transaction)
+    }
+
+    pub async fn restore_transaction(&self, id: Uuid) -> Result<(), anyhow::Error> {
+        let mut transaction = self.get_transaction(id).await?;
+        transaction.timestamp = Utc::now().timestamp_micros();
+        transaction.id = Uuid::new_v4();
+
+        let last_action = self.latest_action_from_alt_key(&transaction.alt_key, transaction.data_type).await?;
+
+        transaction.action = match last_action {
+            Action::Add | Action::Edit => Action::Edit,
+            Action::Delete => Action::Add
+        };
+
+        self.write_transaction(transaction).await?;
+
+        Ok(())
+    }
 }
 
-async fn write_non_create(
+async fn write(
     path: impl AsRef<Path>,
     contents: impl AsRef<[u8]>,
 ) -> Result<(), anyhow::Error> {
     OpenOptions::new()
         .write(true)
-        .create_new(true)
+        .create(true)
         .open(path)
         .await?
         .write_all(contents.as_ref())
         .await
         .map_err(Into::into)
+}
+
+pub struct Watermark {
+    owner_id: Uuid,
+    transaction_id: Uuid,
 }
