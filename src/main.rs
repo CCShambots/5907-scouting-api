@@ -14,6 +14,7 @@ use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use opentelemetry_sdk::{trace, Resource};
 use std::sync::Arc;
 use std::time::Duration;
+use axum::extract::DefaultBodyLimit;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -32,6 +33,8 @@ mod storage_manager;
 mod sync;
 mod templates;
 mod transactions;
+
+const GIGABYTE: usize = 1024 * 1024 * 1024;
 
 #[instrument(ret)]
 async fn handler(user_info: GoogleUser) -> Result<ApiResponse, ApiError> {
@@ -87,6 +90,11 @@ async fn main() {
         .get::<JwtManagerBuilder>("jwt_manager")
         .unwrap()
         .build();
+
+    let max_bytes = settings
+        .get::<usize>("max_upload")
+        .unwrap_or(GIGABYTE * 5);
+
     setup_tracing();
     // set up metrics for adding into the application
     let metrics = axum_otel_metrics::HttpMetricsLayerBuilder::new().build();
@@ -193,6 +201,7 @@ async fn main() {
             axum::routing::get(auth::get_jwt_cache_from_code),
         )
         .layer(CorsLayer::very_permissive())
+        .layer(DefaultBodyLimit::max(max_bytes))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(Arc::new(google_authenticator)))
