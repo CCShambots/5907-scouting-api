@@ -570,15 +570,19 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
         Ok(())
     }
 
-    pub async fn get_needed_blobs(&self, owner_id: Uuid) -> Result<(), anyhow::Error> {
-        let res = sqlx::query(&format!(
+    pub async fn get_needed_blobs(&self, owner_id: Uuid) -> Result<Vec<Uuid>, anyhow::Error> {
+        let res: Vec<Uuid> = sqlx::query(&format!(
             "SELECT * FROM {NEEDED_BLOB_TABLE} \
             WHERE owner_id = ?"
         ))
             .bind(owner_id)
             .fetch_all(&self.pool)
             .await?
-            .iter().filter_map()
+            .iter()
+            .filter_map(|r| r.try_get("blob_id").ok())
+            .collect();
+
+        Ok(res)
     }
 
     pub async fn write_foreign_transaction(&self, transaction: Transaction) -> Result<(), anyhow::Error> {
