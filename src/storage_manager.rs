@@ -81,10 +81,6 @@ impl StorageManager {
         query = query.bind(form.event_key);
         query = query.bind(form.template);
 
-        if self.check_form_exists(form.blob_id).await? {
-            self.remove_form(form.blob_id).await?;
-        }
-
         self.pool.execute(query).await?;
 
         Ok(())
@@ -153,7 +149,12 @@ impl StorageManager {
     #[instrument(skip(self))]
     pub async fn blob_deleted(&self, id: Uuid) -> Result<bool, anyhow::Error> {
         let res: Action =
-            sqlx::query("SELECT action FROM transactions WHERE blob_id = ? ORDER BY timestamp DESC")
+            sqlx::query(&format!(
+                "SELECT action FROM {TRANSACTION_TABLE} \
+                WHERE blob_id = ? AND (id, timestamp) IN (\
+                    SELECT id, MAX(timestamp) FROM {TRANSACTION_TABLE} GROUP BY id\
+                )"
+            ))
                 .bind(id)
                 .fetch_one(&self.pool)
                 .await?
@@ -168,7 +169,12 @@ impl StorageManager {
         alt_key: &str,
         data_type: DataType,
     ) -> Result<Uuid, anyhow::Error> {
-        let res: Uuid = sqlx::query("SELECT blob_id FROM transactions WHERE alt_key = ? AND data_type = ? ORDER BY timestamp DESC")
+        let res: Uuid = sqlx::query(&format!(
+            "SELECT blob_id FROM {TRANSACTION_TABLE} \
+            WHERE alt_key = ? AND data_type = ? AND (id, timestamp) IN (\
+                SELECT id, MAX(timestamp) FROM {TRANSACTION_TABLE} GROUP BY id\
+            )"
+        ))
             .bind(alt_key)
             .bind(data_type)
             .fetch_one(&self.pool).await?
@@ -183,7 +189,12 @@ impl StorageManager {
         alt_key: &str,
         data_type: DataType,
     ) -> Result<Action, anyhow::Error> {
-        let res: Action = sqlx::query("SELECT action FROM transactions WHERE alt_key = ? AND data_type = ? ORDER BY timestamp DESC")
+        let res: Action = sqlx::query(&format!(
+            "SELECT action FROM {TRANSACTION_TABLE} \
+            WHERE alt_key = ? AND data_type = ? AND (id, timestamp) IN (\
+                SELECT id, MAX(timestamp) FROM {TRANSACTION_TABLE} GROUP BY id\
+            )"
+        ))
             .bind(alt_key)
             .bind(data_type)
             .fetch_one(&self.pool).await?
@@ -491,10 +502,11 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
     #[instrument[skip(self), err]]
     pub async fn storable_list(&self, data_type: DataType) -> Result<Vec<String>, anyhow::Error> {
         let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT alt_key, action, MAX(timestamp) \
+            "SELECT alt_key, action, id, timestamp \
                 FROM {TRANSACTION_TABLE} \
-                WHERE data_type = ? \
-                GROUP BY alt_key"
+                WHERE data_type = ? AND (id, timestamp) IN (\
+                    SELECT id, MAX(timestamp) FROM {TRANSACTION_TABLE} GROUP BY id\
+                )"
         ));
 
         let query = query_builder.build().bind(data_type);
@@ -522,10 +534,11 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
         data_type: DataType,
     ) -> Result<Vec<u8>, anyhow::Error> {
         let mut query = QueryBuilder::new(format!(
-            "SELECT blob_id, action, MAX(timestamp) \
+            "SELECT blob_id, action, id, timestamp \
                 FROM {TRANSACTION_TABLE} \
-                WHERE data_type = ? AND alt_key = ? \
-                GROUP BY alt_key"
+                WHERE data_type = ? AND alt_key = ? AND (id, timestamp) IN (\
+                    SELECT id, MAX(timestamp) FROM {TRANSACTION_TABLE} GROUP BY id\
+                )"
         ));
         let mut query = query.build();
 
