@@ -1,0 +1,14 @@
+<table class="table table-striped table-sm">
+    <tr>
+        <th scope="col">Name</th>
+        <th scope="col">Timestamp</th>
+        <th scope="col">Action</th>
+    </tr>
+    {% for transaction in transactions %}
+    <tr>
+        <td>{{transaction.alt_key}}</td>
+        <td>{{transaction.timestamp}}</td>
+        <td>{{transaction.action}}</td>
+    </tr>
+    {% endfor %}
+</table>

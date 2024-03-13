@@ -37,6 +37,7 @@ mod storage_manager;
 mod sync;
 mod templates;
 mod transactions;
+mod ui;
 
 #[instrument(ret)]
 async fn handler(user_info: GoogleUser) -> Result<ApiResponse, ApiError> {
@@ -279,6 +280,14 @@ async fn main() -> Result<(), anyhow::Error> {
         .route(
             "/protected/form/:template",
             axum::routing::post(forms::add_form),
+        )
+        .route(
+            "/protected/ui/home",
+            axum::routing::get(ui::ui_main),
+        )
+        .route(
+            "/protected/ui/transaction-history",
+            axum::routing::get(ui::transaction_history),
         )
         .layer(from_extractor::<GoogleUser>())
         .route("/", axum::routing::get(auth::login_handler))
