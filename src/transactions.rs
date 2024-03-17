@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Encode, FromRow, Type};
@@ -46,4 +47,10 @@ pub enum Action {
     Add,
     Delete,
     Edit,
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }

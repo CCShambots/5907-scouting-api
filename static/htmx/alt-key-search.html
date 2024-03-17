@@ -1,0 +1,5 @@
+{% for transaction in transactions %}
+<tr hx-get="/protected/ui/alt-key-row/{{transaction.alt_key}}/{{transaction.cache_id}}">
+    <td>Loading...</td>
+</tr>
+{% endfor %}

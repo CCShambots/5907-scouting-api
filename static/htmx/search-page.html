@@ -1,0 +1,21 @@
+<div>
+    <div class="form-floating">
+        <label for="search">Item Name</label>
+        <input class="form-control-lg" type="search"
+               id="search" name="search"
+               hx-get="/protected/ui/search" hx-trigger="input changed throttle:500ms, search"
+               hx-target="#search-results"/>
+    </div>
+    <table class="table table-hover table-sm">
+        <thead>
+        <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Timestamp</th>
+            <th scope="col">Action</th>
+        </tr>
+        </thead>
+        <tbody id="search-results">
+        <!-- search results -->
+        </tbody>
+    </table>
+</div>

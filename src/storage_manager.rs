@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha256::Sha256Digest;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{query, Executor, QueryBuilder, Row, Sqlite, SqlitePool, Execute, ValueRef};
+use sqlx::{query, Executor, QueryBuilder, Row, Sqlite, SqlitePool, Execute, ValueRef, FromRow};
 use std::ops::Add;
 use std::path::Path;
 use std::str::FromStr;
@@ -497,6 +497,41 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
                 Ok(())
             }
         }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn search_count(&self, search: &str) -> Result<i64, anyhow::Error> {
+        let count = sqlx::query::<Sqlite>(&format!(
+            "SELECT COUNT(*) as count FROM (\
+                SELECT DISTINCT alt_key \
+                FROM {TRANSACTION_TABLE} \
+                WHERE alt_key = %?%\
+            )"
+        ))
+            .bind(search)
+            .fetch_one(&self.pool)
+            .await?
+            .get("count");
+
+        Ok(count)
+    }
+
+    pub async fn search(&self, search: &str) -> Result<Vec<Transaction>, anyhow::Error> {
+        let res: Vec<Transaction> = sqlx::query::<Sqlite>(&format!(
+            "SELECT * FROM {TRANSACTION_TABLE} \
+            WHERE alt_key = %?% AND (alt_key, timestamp) IN (\
+                SELECT alt_key, MAX(timestamp) as timestamp FROM {TRANSACTION_TABLE} \
+                GROUP BY alt_key\
+            )"
+        ))
+            .bind(search)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .filter_map(|row| Transaction::from_row(row).ok())
+            .collect();
+
+        Ok(res)
     }
 
     #[instrument[skip(self), err]]
