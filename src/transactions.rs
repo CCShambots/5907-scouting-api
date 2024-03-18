@@ -34,7 +34,7 @@ pub struct Transaction {
     pub timestamp: i64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Type, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, Type, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum DataType {
     Bytes,
     Form,
