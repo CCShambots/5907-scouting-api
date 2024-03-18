@@ -25,6 +25,7 @@ use std::ops::Add;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
+use datafusion::sql::sqlparser::keywords::Keyword::TRANSACTION;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::{fs, io};
@@ -161,6 +162,43 @@ impl StorageManager {
                 .try_get("action")?;
 
         Ok(matches!(res, Action::Delete))
+    }
+
+    #[instrument(skip(self))]
+    pub async fn latest_transaction_from_alt_key(
+        &self,
+        alt_key: &str,
+        data_type: DataType,
+    ) -> Result<Transaction, anyhow::Error> {
+        let res = sqlx::query(&format!(
+            "SELECT * FROM {TRANSACTION_TABLE} \
+            WHERE alt_key = ? AND data_type = ? AND (id, timestamp) IN (\
+                SELECT id, Max(timestamp) FROM {TRANSACTION_TABLE} GROUP BY id\
+            )"
+        ))
+            .bind(alt_key)
+            .bind(data_type)
+            .fetch_one(&self.pool).await?;
+
+        Ok(Transaction::from_row(&res)?)
+    }
+
+    #[instrument(skip(self))]
+    pub async fn transaction_count(
+        &self,
+        alt_key: &str,
+        data_type: DataType,
+    ) -> Result<i64, anyhow::Error> {
+        let res: i64 = sqlx::query(&format!(
+            "SELECT COUNT(*) as count FROM {TRANSACTION_TABLE} \
+            WHERE alt_key = ? AND data_type = ?"
+        ))
+            .bind(alt_key)
+            .bind(data_type)
+            .fetch_one(&self.pool).await?
+            .try_get("count")?;
+
+        Ok(res)
     }
 
     #[instrument(skip(self))]

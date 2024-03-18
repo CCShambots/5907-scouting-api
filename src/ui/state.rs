@@ -1,40 +1,26 @@
 use std::collections::BTreeMap;
 use std::ops::{Deref};
 use std::sync::Arc;
+use std::time::Duration;
 use chrono::{DateTime, Utc};
+use moka::future::{Cache, CacheBuilder};
+use moka::policy::EvictionPolicy;
 use tokio::sync::RwLock;
+use crate::transactions::DataType;
 
 impl InterfaceManager {
-    pub async fn get_state(&self) -> InterfaceState {
-        self.state.read().await.deref().clone()
+    pub fn new(mem_size: u64) -> Self {
+        let mut builder = CacheBuilder::new(mem_size)
+            .eviction_policy(EvictionPolicy::tiny_lfu())
+            .time_to_live(Duration::from_secs(15 * 60));
+
+        Self {
+            cache: builder.build()
+        }
     }
 
-    pub async fn set_state(&self, state: InterfaceState) {
-        let mut inner_state = self.state.write().await;
-        *inner_state = state;
-    }
-
-    pub async fn check_cache(&self, id: &str) -> Option<InterfaceCacheEntry> {
-        self.cache.read().await.get(id).cloned()
-    }
-
-    pub async fn set_cache(&self, key: String, entry_type: EntryType, count: i64) {
-        self.cache.write().await.insert(
-            key,
-            InterfaceCacheEntry {
-                timestamp: Utc::now(),
-                entry_type,
-                count,
-            },
-        );
-    }
-
-    pub async fn clear_cache_entry(&self, id: &str) {
-        self.cache.write().await.remove(id);
-    }
-
-    pub async fn invalidate_cache(&self) {
-        self.cache.write().await.clear();
+    pub fn get_cache(&self) -> Cache<String, InterfaceCacheEntry> {
+        self.cache.clone()
     }
 }
 
@@ -44,10 +30,8 @@ impl Default for InterfaceState {
     }
 }
 
-#[derive(Default)]
 pub struct InterfaceManager {
-    state: Arc<RwLock<InterfaceState>>,
-    cache: Arc<RwLock<BTreeMap<String, InterfaceCacheEntry>>>,
+    cache: Cache<String, InterfaceCacheEntry>,
 }
 
 #[derive(Clone)]
@@ -67,6 +51,6 @@ pub struct InterfaceCacheEntry {
 #[derive(Ord, PartialOrd, Eq, PartialEq, Clone)]
 pub enum EntryType {
     Search(String),
-    AltKeyTableEntry(String),
+    AltKeyTableEntry(String, DataType),
     AltKeyFullHistory(String),
 }

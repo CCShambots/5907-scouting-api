@@ -1,5 +1,6 @@
 {% for transaction in transactions %}
-<tr hx-get="/protected/ui/alt-key-row/{{transaction.alt_key}}/{{transaction.cache_id}}">
+<tr hx-get="/protected/ui/alt-key-row/{{transaction.alt_key}}/{{transaction.data_type}}/{{transaction.cache_id}}"
+    hx-swap="outerHTML" hx-trigger="revealed delay:1s">
     <td>Loading...</td>
 </tr>
 {% endfor %}
