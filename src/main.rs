@@ -179,11 +179,15 @@ async fn main() -> Result<(), anyhow::Error> {
         .get::<JwtManagerBuilder>("jwt_manager")?
         .build();
 
-    let sync_manager = settings
-        .get::<SyncManager>("sync")?;
+    let storage_manager = Arc::new(StorageManager::new(&path)
+        .await?);
 
-    let storage_manager = StorageManager::new(&path)
-        .await?;
+    let sync_manager = SyncManager {
+        approved_children: settings.get("sync.approved_children")?,
+        parent: settings.get("sync.parent")?,
+        id: settings.get("sync.id")?,
+        storage_manager: storage_manager.clone(),
+    };
 
 
     // set up metrics for adding into the application
@@ -285,10 +289,10 @@ async fn main() -> Result<(), anyhow::Error> {
             "/protected/ui/home",
             axum::routing::get(ui::ui_main),
         )
-        .route(
+        /*.route(
             "/protected/ui/transaction-history",
             axum::routing::get(ui::transaction_history),
-        )
+        )*/
         .layer(from_extractor::<GoogleUser>())
         .route("/", axum::routing::get(auth::login_handler))
         .route(
@@ -302,7 +306,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(Arc::new(google_authenticator)))
-                .layer(Extension(Arc::new(storage_manager)))
+                .layer(Extension(storage_manager))
                 .layer(Extension(Arc::new(jwt_manager)))
                 .layer(Extension(Arc::new(sync_manager)))
                 .layer(metrics)

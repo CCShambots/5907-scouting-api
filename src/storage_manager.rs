@@ -682,7 +682,7 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
     pub async fn get_transaction(&self, id: Uuid) -> Result<Transaction, anyhow::Error> {
         let mut query: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
             "SELECT * \
-            FROM {TRANSACTION_TABLE}\
+            FROM {TRANSACTION_TABLE} \
             WHERE id = "
         ));
 
@@ -694,6 +694,26 @@ WHERE last_action IS NOT 'Delete' AND blob_id IN ( \
             .await?;
 
         Ok(transaction)
+    }
+
+    pub async fn get_transaction_after(&self, id: Uuid) -> Result<Option<Transaction>, anyhow::Error> {
+        let transaction = self.get_transaction(id).await?;
+
+        let res = sqlx::query::<Sqlite>(&format!(
+            "SELECT * FROM {TRANSACTION_TABLE}\
+            WHERE (id, timestamp) IN (\
+                SELECT id, MIN(timestamp) as timestamp \
+                FROM {TRANSACTION_TABLE} \
+                WHERE timestamp > ? \
+                GROUP BY id\
+            )"
+        ))
+            .bind(transaction.timestamp)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(|row| Transaction::from_row(&row).unwrap());
+
+        Ok(res)
     }
 
     pub async fn restore_transaction(&self, id: Uuid) -> Result<(), anyhow::Error> {
